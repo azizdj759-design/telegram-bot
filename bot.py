@@ -29,7 +29,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def fetch_tiktok_data_pro(username):
-    # محاولة الجلب عبر واجهة تيك توك الرسمية المباشرة المفتوحة للويب
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -44,8 +43,6 @@ async def fetch_tiktok_data_pro(username):
             async with session.get(url, headers=headers, timeout=12) as resp:
                 if resp.status == 200:
                     html = await resp.text()
-                    
-                    # البحث عن كدان البيانات الرقمية المحقونة في صفحة الويب
                     import json
                     start_keyword = 'sigi-persisted-data">'
                     start_pos = html.find(start_keyword)
@@ -57,7 +54,6 @@ async def fetch_tiktok_data_pro(username):
                             json_str = html[start_pos:end_pos]
                             data = json.loads(json_str)
                             
-                            # استخراج بيانات المستخدم الإحصائية والوصفية
                             users_module = data.get("UserModule", {}).get("users", {})
                             stats_module = data.get("UserModule", {}).get("stats", {})
                             
@@ -76,7 +72,6 @@ async def fetch_tiktok_data_pro(username):
         except Exception as e:
             logging.error(f"Scrape Error: {e}")
             
-    # طريقة بديلة في حال الحظر المباشر لجلب البيانات عبر واجهة تحليل بديلة
     async with aiohttp.ClientSession() as session:
         try:
             fallback_url = f"https://tikwm.com/api/user/info?unique_id={username}"
@@ -146,5 +141,5 @@ def main():
     print("البوت الاحترافي المزدوج يعمل الآن...")
     application.run_polling()
 
-if __name__ == 'main':
+if __name__ == '__main__':
     main()
