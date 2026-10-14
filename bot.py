@@ -109,7 +109,7 @@ async def check_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == '__main__':
     # ⚠️ استبدل النص التالي بالتوكن الحقيقي الذي أخذته من BotFather
-    TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+    TOKEN = "8895436088:AAHPs09G8n1d2n2EREXZIzy9eB5wN1ykqUc"
     
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
