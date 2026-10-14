@@ -1,8 +1,11 @@
 import asyncio
 import logging
 import re
+import os
 from bs4 import BeautifulSoup
 import aiohttp
+from flask import Flask
+from threading import Thread
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, MessageHandler, filters
 
@@ -12,7 +15,18 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# قائمة واسعة للمنصات التي سيتم فحصها
+# إنشاء خادم ويب وهمي لكي تستمر خدمة Render في العمل دون أن تغلق
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running 24/7!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+# قائمة المنصات للفحص
 PLATFORMS = {
     "GitHub": "https://github.com/{}",
     "Reddit": "https://www.reddit.com/user/{}/",
@@ -38,11 +52,7 @@ async def fetch_platform(session, platform, url_template, username):
             if response.status == 200:
                 html = await response.text()
                 soup = BeautifulSoup(html, 'html.parser')
-                
-                # استخراج عنوان الصفحة لمعرفة الاسم الظاهر إن أمكن
                 title = soup.title.string.strip() if soup.title else platform
-                
-                # البحث عن أي روابط تواصل اجتماعي أخرى داخل الصفحة (في البايو)
                 found_links = re.findall(r'https?://(?:www\.)?(?:instagram|twitter|tiktok|facebook|youtube)\.com/[a-zA-Z0-9_.-]+', html)
                 unique_links = list(set([l for l in found_links if username not in l]))
 
@@ -51,7 +61,7 @@ async def fetch_platform(session, platform, url_template, username):
                     "exists": True,
                     "url": url,
                     "title": title[:40],
-                    "extra_links": unique_links[:3] # جلب أول 3 روابط خارجية مكتشفة
+                    "extra_links": unique_links[:3]
                 }
             else:
                 return {"platform": platform, "exists": False}
@@ -61,7 +71,7 @@ async def fetch_platform(session, platform, url_template, username):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🔍 **مرحباً بك في بوت التتبع المتقدم (OSINT Username Tracker)**\n\n"
-        "أرسل لي اسم المستخدم (`Username`) وسأقوم بفحصه بشكل تزمني فائق السرعة عبر جميع المنصات المتاحة لاستخراج الحسابات والروابط.",
+        "أرسل لي اسم المستخدم (`Username`) وسأقوم بفحصه فوراً عبر المنصات المتاحة.",
         parse_mode="Markdown"
     )
 
@@ -69,7 +79,6 @@ async def check_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.message.text.strip().replace("@", "")
     status_msg = await update.message.reply_text(f"⏳ جاري فحص اسم المستخدم `{username}` عبر جميع المنصات...", parse_mode="Markdown")
     
-    # تنفيذ الفحص التزمني المتوازي لجميع المنصات في نفس اللحظة
     async with aiohttp.ClientSession() as session:
         tasks = [
             fetch_platform(session, platform, url_template, username)
@@ -92,11 +101,10 @@ async def check_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 line += f"\n   └ 🔗 **روابط بداخل الصفحة:** " + ", ".join(res["extra_links"])
             
             text_results.append(line)
-            # إضافة أزرار تفاعلية للانتقال السريع للحسابات المكتشفة
             keyboard.append([InlineKeyboardButton(text=f"فتح {platform_name}", url=url)])
 
     if found_count == 0:
-        text_results.append("❌ لم يتم العثور على حسابات علنية بنفس اسم المستخدم على المنصات المفحوصة.")
+        text_results.append("❌ لم يتم العثور على حسابات علنية بنفس اسم المستخدم.")
 
     reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
 
@@ -107,13 +115,19 @@ async def check_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-if __name__ == '__main__':
-    # ⚠️ استبدل النص التالي بالتوكن الحقيقي الذي أخذته من BotFather
-    TOKEN = "8895436088:AAHPs09G8n1d2n2EREXZIzy9eB5wN1ykqUc"
-    
+def main():
+    # تشغيل خادم الويب في خلفية منفصلة ليتوافق مع قيود Render Web Service
+    t = Thread(target=run_web)
+    t.start()
+
+    # تشغيل بوت تيليغرام
+    TOKEN = "YOUR_TELEGRAM_BOT_TOKEN" # <--- ضع توكن بوتك هنا
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), check_username))
     
-    print("البوت المتطور يعمل الآن...")
+    print("البوت وخادم الويب يعملان معاً...")
     application.run_polling()
+
+if __name__ == '__main__':
+    main()
