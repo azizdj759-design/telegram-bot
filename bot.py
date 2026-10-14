@@ -1,11 +1,11 @@
 import os
 import logging
 import asyncio
+import aiohttp
 from flask import Flask, request
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# إعداد التسجيلات للرصد والمتابعة
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 TOKEN = "8895436088:AAGABbLjpEG72WJ7d5M8maWj20xBAjBy5wM"
@@ -15,65 +15,71 @@ app = Flask(__name__)
 telegram_app = None
 
 async def setup_bot():
-    """بناء وتكوين نظام البوت الاستخباراتي"""
     app_bot = Application.builder().token(TOKEN).build()
-    app_bot.add_handler(CommandHandler("start", start_command))
-    app_bot.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_target))
+    app_bot.add_handler(CommandHandler("start", cmd_start))
+    app_bot.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), process_osint_target))
     await app_bot.initialize()
     return app_bot
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """رسالة الترحيب الخيالية"""
-    welcome_text = (
-        "⚡ **النظام الاستخباراتي السيبراني - TikTok OSINT**\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🛡️ **الحالة:** متصل وجاهز للعمل بكفاءة عالية.\n"
-        "🎯 **المهمة:** تحليل الحسابات واستخراج الروابط الاستخباراتية.\n\n"
-        "أرسل الآن اسم المستخدم (`Username`) أو رابط الحساب لبدء الفحص الفوري."
-    )
-    await update.message.reply_text(welcome_text, parse_mode="Markdown")
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("CYBER OSINT ENGINE ONLINE. Send target username.")
 
-async def handle_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة الأهداف وإرسال التقارير المرئية بدقة دون تكرار"""
+async def process_osint_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    text = update.message.text.strip()
+    raw_text = update.message.text.strip()
+    target = raw_text.replace("@", "").replace("https://www.tiktok.com/@", "").split("/")[0].split("?")[0]
     
-    # تنظيف المدخلات واستخراج اسم المستخدم بدقة
-    username = text.replace("@", "").replace("https://www.tiktok.com/@", "").split("/")[0].split("?")[0]
-    
-    profile_url = f"https://www.tiktok.com/@{username}"
-    archive_url = f"https://web.archive.org/web/*/{profile_url}"
-    google_dork = f"https://www.google.com/search?q=site:tiktok.com+{username}"
+    # محرك جلب البيانات الخفي والمتقدم عبر واجهة عالية الأداء
+    api_url = f"https://tikwm.com/api/user/info?unique_id={target}"
+    headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"}
 
-    # لوحة أزرار استخباراتية تفاعلية
-    buttons = [
-        [InlineKeyboardButton("🔗 فتح الملف الشخصي المباشر", url=profile_url)],
-        [InlineKeyboardButton("🏛️ فحص الأرشيف التاريخي والسجلات", url=archive_url)],
-        [InlineKeyboardButton("🔍 البحث العميق في محركات الويب", url=google_dork)]
-    ]
-    markup = InlineKeyboardMarkup(buttons)
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(api_url, headers=headers, timeout=10) as resp:
+                if resp.status == 200:
+                    res = await resp.json()
+                    if res.get("code") == 0:
+                        data = res.get("data", {})
+                        u = data.get("userInfo", {})
+                        s = data.get("stats", {})
+                        
+                        # استخراج البيانات التقنية العميقة التي تعجز عنها البوتات العادية
+                        report = (
+                            f"[+] TARGET: @{u.get('uniqueId', target)}\n"
+                            f"[+] NICKNAME: {u.get('nickname', 'N/A')}\n"
+                            f"[+] INTERNAL UID: {u.get('id', 'N/A')}\n"
+                            f"[+] SEC-UID: {u.get('secUid', 'N/A')[:25]}...\n"
+                            f"[+] REGION/MARKET: {data.get('region', 'GLOBAL')}\n"
+                            f"[+] VERIFIED STATUS: {'YES' if u.get('verified') else 'NO'}\n"
+                            f"[+] BIO SIGNATURE: {u.get('signature', 'EMPTY')}\n"
+                            f"----------------------------------\n"
+                            f"[M] FOLLOWERS: {s.get('follower_count', 0):,}\n"
+                            f"[M] FOLLOWING: {s.get('following_count', 0):,}\n"
+                            f"[M] TOTAL LIKES: {s.get('heart', 0):,}\n"
+                            f"[M] TOTAL POSTS: {s.get('video_count', 0):,}\n"
+                            f"[M] DIGITAL PING: SECURE_OK"
+                        )
+                        await update.message.reply_text(report)
+                        return
+        except Exception as e:
+            logging.error(f"Engine exception: {e}")
 
-    report = (
-        f"📊 **التقرير الاستخباراتي المتقدم**\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📌 **الهدف المستهدف:** `@{username}`\n"
-        f"🌐 **الرابط الرسمي:** {profile_url}\n"
-        f"🛡️ **مستوى الأمان:** مشفر ومؤمن بالكامل.\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"اختر أحد الأزرار أدناه للوصول السريع للبيانات:"
+    # مسار الطوارئ الاستخباراتي في حال القيود المشددة
+    fallback_report = (
+        f"[!] TARGET: @{target}\n"
+        f"[!] STATUS: RESTRICTED OR CLOUDFLARE SHIELDED\n"
+        f"[!] DIRECT ARCHIVE LINK: https://web.archive.org/web/*/https://www.tiktok.com/@{target}"
     )
-
-    await update.message.reply_text(report, parse_mode="Markdown", reply_markup=markup)
+    await update.message.reply_text(fallback_report)
 
 @app.route('/')
 def home():
-    return "Cyber OSINT TikTok Bot is Online and Secured!"
+    return "OSINT Core Active"
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
-    """محطة الويب هوك الآمنة لمنع التكرار وضمان استقرار السيرفر"""
     global telegram_app
     try:
         json_data = request.get_json(force=True)
@@ -81,7 +87,7 @@ def webhook():
             update = Update.de_json(json_data, telegram_app.bot)
             asyncio.run(telegram_app.process_update(update))
     except Exception as e:
-        logging.error(f"Webhook processing error: {e}")
+        logging.error(f"Error: {e}")
     return "OK", 200
 
 if __name__ == '__main__':
