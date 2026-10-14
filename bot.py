@@ -116,12 +116,12 @@ async def check_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 def main():
-    # تشغيل خادم الويب في خلفية منفصلة ليتوافق مع قيود Render Web Service
+    # تشغيل خادم الويب في خلفية منفصلة ليتوافق مع قيود Render
     t = Thread(target=run_web)
     t.start()
 
-    # تشغيل بوت تيليغرام
-    TOKEN = "YOUR_TELEGRAM_BOT_TOKEN" # <--- ضع توكن بوتك هنا
+    # تشغيل بوت تيليغرام بالتوكن الجديد
+    TOKEN = "8895436088:AAGABbLjpEG72WJ7d5M8maWj20xBAjBy5wM"
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), check_username))
