@@ -17,23 +17,22 @@ telegram_app = None
 async def setup_bot():
     app_bot = Application.builder().token(TOKEN).build()
     app_bot.add_handler(CommandHandler("start", cmd_start))
-    app_bot.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), process_osint_target))
+    app_bot.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), process_target))
     await app_bot.initialize()
     return app_bot
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("CYBER OSINT ENGINE ONLINE. Send target username.")
+    await update.message.reply_text("OSINT Core Online. Send TikTok username.")
 
-async def process_osint_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def process_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    raw_text = update.message.text.strip()
-    target = raw_text.replace("@", "").replace("https://www.tiktok.com/@", "").split("/")[0].split("?")[0]
+    text = update.message.text.strip()
+    target = text.replace("@", "").replace("https://www.tiktok.com/@", "").split("/")[0].split("?")[0]
     
-    # محرك جلب البيانات الخفي والمتقدم عبر واجهة عالية الأداء
     api_url = f"https://tikwm.com/api/user/info?unique_id={target}"
-    headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0"}
 
     async with aiohttp.ClientSession() as session:
         try:
@@ -45,38 +44,29 @@ async def process_osint_target(update: Update, context: ContextTypes.DEFAULT_TYP
                         u = data.get("userInfo", {})
                         s = data.get("stats", {})
                         
-                        # استخراج البيانات التقنية العميقة التي تعجز عنها البوتات العادية
                         report = (
-                            f"[+] TARGET: @{u.get('uniqueId', target)}\n"
-                            f"[+] NICKNAME: {u.get('nickname', 'N/A')}\n"
-                            f"[+] INTERNAL UID: {u.get('id', 'N/A')}\n"
-                            f"[+] SEC-UID: {u.get('secUid', 'N/A')[:25]}...\n"
-                            f"[+] REGION/MARKET: {data.get('region', 'GLOBAL')}\n"
-                            f"[+] VERIFIED STATUS: {'YES' if u.get('verified') else 'NO'}\n"
-                            f"[+] BIO SIGNATURE: {u.get('signature', 'EMPTY')}\n"
-                            f"----------------------------------\n"
-                            f"[M] FOLLOWERS: {s.get('follower_count', 0):,}\n"
-                            f"[M] FOLLOWING: {s.get('following_count', 0):,}\n"
-                            f"[M] TOTAL LIKES: {s.get('heart', 0):,}\n"
-                            f"[M] TOTAL POSTS: {s.get('video_count', 0):,}\n"
-                            f"[M] DIGITAL PING: SECURE_OK"
+                            f"🎯 TARGET: @{u.get('uniqueId', target)}\n"
+                            f"👤 NICKNAME: {u.get('nickname', 'N/A')}\n"
+                            f"🆔 UID: {u.get('id', 'N/A')}\n"
+                            f"🌍 REGION: {data.get('region', 'N/A')}\n"
+                            f"🛡️ VERIFIED: {'YES' if u.get('verified') else 'NO'}\n"
+                            f"📝 BIO: {u.get('signature', 'None')}\n"
+                            f"----------------------------\n"
+                            f"👥 FOLLOWERS: {s.get('follower_count', 0):,}\n"
+                            f"🫂 FOLLOWING: {s.get('following_count', 0):,}\n"
+                            f"❤️ LIKES: {s.get('heart', 0):,}\n"
+                            f"🎬 POSTS: {s.get('video_count', 0):,}"
                         )
                         await update.message.reply_text(report)
                         return
         except Exception as e:
-            logging.error(f"Engine exception: {e}")
+            logging.error(f"Error: {e}")
 
-    # مسار الطوارئ الاستخباراتي في حال القيود المشددة
-    fallback_report = (
-        f"[!] TARGET: @{target}\n"
-        f"[!] STATUS: RESTRICTED OR CLOUDFLARE SHIELDED\n"
-        f"[!] DIRECT ARCHIVE LINK: https://web.archive.org/web/*/https://www.tiktok.com/@{target}"
-    )
-    await update.message.reply_text(fallback_report)
+    await update.message.reply_text(f"❌ Failed to fetch data for @{target}. Account might be private or restricted.")
 
 @app.route('/')
 def home():
-    return "OSINT Core Active"
+    return "Bot is running clean."
 
 @app.route(f'/{TOKEN}', methods=['POST'])
 def webhook():
@@ -87,7 +77,7 @@ def webhook():
             update = Update.de_json(json_data, telegram_app.bot)
             asyncio.run(telegram_app.process_update(update))
     except Exception as e:
-        logging.error(f"Error: {e}")
+        logging.error(f"Webhook error: {e}")
     return "OK", 200
 
 if __name__ == '__main__':
