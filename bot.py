@@ -12,7 +12,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "OSINT Archive TikTok Bot is Online!"
+    return "TikTok Professional OSINT Bot is Active!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -20,23 +20,23 @@ def run_web():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🔎 **مرحباً بك في بوت استعلام أرشيف تيك توك المتقدم (OSINT Cloud)**\n\n"
-        "أرسل اسم المستخدم (`Username`) لاستخراج البيانات من قواعد البيانات والأرشيف العالمي المتاح.",
+        "⚡ **مرحباً بك في بوت تحليل تيك توك الاحترافي (OSINT Pro)**\n\n"
+        "أرسل الآن اسم المستخدم (`Username`) أو رابط الحساب للحصول على البيانات الشاملة والإحصائيات الحية فوراً.",
         parse_mode="Markdown"
     )
 
-async def fetch_archive_data(username):
-    """
-    استعلام ذاكرة المعلومات والأرشيف عبر واجهات البيانات المستقرة
-    """
+async def fetch_professional_tiktok_data(username):
+    # استخدام واجهة موثوقة وعالية الأداء لجلب بيانات الحساب بدقة
     url = f"https://tikwm.com/api/user/info?unique_id={username}"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "application/json"
     }
     
+    async strong_session = aiohttp.ClientSession()
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.get(url, headers=headers, timeout=12) as resp:
+            async with session.get(url, headers=headers, timeout=15) as resp:
                 if resp.status == 200:
                     res = await resp.json()
                     if res.get("code") == 0:
@@ -47,63 +47,64 @@ async def fetch_archive_data(username):
                             "success": True,
                             "nickname": u.get("nickname", username),
                             "username": u.get("uniqueId", username),
-                            "id": u.get("id", "غير محدد"),
-                            "signature": u.get("signature", "لا يوجد وصف محدد"),
+                            "id": u.get("id", "غير متوفر"),
+                            "signature": u.get("signature", "لا يوجد وصف (Bio)"),
                             "followers": s.get("follower_count", 0),
                             "following": s.get("following_count", 0),
                             "likes": s.get("heart", 0),
                             "videos": s.get("video_count", 0),
                             "verified": u.get("verified", False),
-                            "region": data.get("region", "عام")
+                            "region": data.get("region", "غير محدد"),
+                            "avatar": u.get("avatarLarger", "")
                         }
         except Exception as e:
-            logging.error(f"Archive Fetch Error: {e}")
+            logging.error(f"API Connection Error: {e}")
             
-    return None
+    return {"success": False}
 
 async def handle_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip().replace("@", "").replace("https://www.tiktok.com/@", "")
     username = text.split("/")[0].split("?")[0]
     
-    status = await update.message.reply_text(f"🔍 جاري البحث عن `@{username}` في قواعد البيانات والأرشيف...", parse_mode="Markdown")
+    status = await update.message.reply_text(f"🔍 جاري استخراج البيانات الاستخباراتية للحساب `@{username}`...", parse_mode="Markdown")
     
-    info = await fetch_archive_data(username)
+    result = await fetch_professional_tiktok_data(username)
     
-    # روابط استخباراتية إضافية سريعة ومفتوحة المصدر (Wayback Archive & Google Cache)
-    archive_url = f"https://web.archive.org/web/*/{username}"
     profile_url = f"https://www.tiktok.com/@{username}"
     
-    buttons = [
-        [InlineKeyboardButton("🔗 فتح الصفحة الحالية", url=profile_url)],
-        [InlineKeyboardButton("🏛️ فحص الأرشيف التاريخي (Wayback)", url=archive_url)]
-    ]
-    markup = InlineKeyboardMarkup(buttons)
-
-    if not info:
+    if not result.get("success"):
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 فتح الحساب مباشرة", url=profile_url)]])
         await status.edit_text(
-            f"⚠️ **تعذر استخراج البيانات اللحظية للحساب `@{username}`**\n\n"
-            f"يمكنك الاطلاع على الأرشيف التاريخي المخزن مباشرة عبر الرابط أدناه:",
+            f"❌ عذراً، لم نتمكن من جلب بيانات الحساب `@{username}`.\nقد يكون الحساب خاصاً أو تم تغييره.",
             parse_mode="Markdown",
             reply_markup=markup
         )
         return
 
-    verified_badge = "✅ حساب موثق" if info['verified'] else "👤 حساب عادي"
+    verified_badge = "✅ حساب موثق (Verified)" if result['verified'] else "👤 حساب عادي"
     
     report = (
-        f"📊 **تقرير ذاكرة البيانات الحرة (TikTok OSINT)**\n\n"
-        f"👤 **الاسم:** {info['nickname']}\n"
-        f"📌 **اسم المستخدم:** `@{info['username']}`\n"
-        f"🆔 **معرف النظام (ID):** `{info['id']}`\n"
-        f"🌍 **منطقة التسجيل:** `{info['region']}`\n"
-        f"🛡️ **الحالة:** {verified_badge}\n\n"
-        f"📝 **الوصف (Bio):**\n`{info['signature']}`\n\n"
-        f"📈 **الإحصائيات المتاحة:**\n"
-        f"👥 المتابعين: `{info['followers']:,}`\n"
-        f"🫂 يتابعهم: `{info['following']:,}`\n"
-        f"❤️ الإعجابات: `{info['likes']:,}`\n"
-        f"🎬 عدد الفيديوهات: `{info['videos']:,}`"
+        f"📊 **التقرير الاستخباراتي الشامل لتيك توك**\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 **الاسم الظاهر:** {result['nickname']}\n"
+        f"📌 **اسم المستخدم:** `@{result['username']}`\n"
+        f"🆔 **معرف الحساب (UID):** `{result['id']}`\n"
+        f"🌍 **منطقة السيرفر:** `{result['region']}`\n"
+        f"🛡️ **حالة الحساب:** {verified_badge}\n\n"
+        f"📝 **البايو (Bio):**\n`{result['signature']}`\n\n"
+        f"📈 **إحصائيات الأداء والحساب:**\n"
+        f"👥 المتابعين: `{result['followers']:,}`\n"
+        f"🫂 يتابعهم: `{result['following']:,}`\n"
+        f"❤️ إجمالي الإعجابات: `{result['likes']:,}`\n"
+        f"🎬 عدد الفيديوهات: `{result['videos']:,}`\n"
+        f"━━━━━━━━━━━━━━━━━━━"
     )
+    
+    buttons = [
+        [InlineKeyboardButton("🔗 فتح الملف الشخصي في تيك توك", url=profile_url)],
+        [InlineKeyboardButton("🏛️ فحص الأرشيف التاريخي", url=f"https://web.archive.org/web/*/{profile_url}")]
+    ]
+    markup = InlineKeyboardMarkup(buttons)
     
     await status.edit_text(report, parse_mode="Markdown", reply_markup=markup)
 
@@ -116,7 +117,7 @@ def main():
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_query))
     
-    print("Cloud OSINT Bot is running...")
+    print("Professional OSINT Bot is running...")
     app_bot.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
