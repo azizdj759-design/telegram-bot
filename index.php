@@ -1,15 +1,18 @@
 <?php
-/* ============================================================================== */
+/* ============================================================
+   TRACKER PRO ULTIMATE — Single File
+   Fixed Syntax Error & Translated to English
+   ============================================================ */
 
-// ==================== 1. الإعدادات ====================
+// ==================== 1. CONFIGURATION ====================
 define('APP_NAME', 'Tracker Pro');
 define('APP_TIMEZONE', 'Africa/Algiers');
 define('DB_PATH', __DIR__ . '/tracker.db');
-define('DASHBOARD_PASSWORD', 'غيّرني-الآن-إلى-شيء-قوي');
+define('DASHBOARD_PASSWORD', 'change-this-password-now');
 
-// ⚠️⚠️⚠️ هذا التوكن مكشوف — اذهب لـ @BotFather → /revoke فورًا بعد النسخ
-define('TELEGRAM_BOT_TOKEN', '8895436088:AAEP3Gynyzoh8VG5YQTnBZl4xH1vh4wMvo4');
-define('TELEGRAM_CHAT_ID', ''); // ✏️ ضع chat id هنا (من getUpdates)
+// ✏️ TELEGRAM BOT CONFIGURATION
+define('TELEGRAM_BOT_TOKEN', '8895436088:AAEP3Gynyzoh8VG5YQTnBZl4xH1vh4wMvo4'); // ⚠️ Revoke this!
+define('TELEGRAM_CHAT_ID', ''); // ✏️ Put your Chat ID here
 
 define('RATE_LIMIT_CREATE', 30);
 define('RATE_LIMIT_VISIT', 300);
@@ -25,7 +28,7 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start(['cookie_httponly'=>true,'cookie_samesite'=>'Lax','cookie_secure'=>isset($_SERVER['HTTPS'])]);
 }
 
-// ==================== 2. قاعدة البيانات ====================
+// ==================== 2. DATABASE ====================
 function db(): PDO {
     static $pdo = null;
     if ($pdo === null) {
@@ -83,7 +86,7 @@ function migrate(PDO $db): void {
     $db->exec("PRAGMA user_version = 3");
 }
 
-// ==================== 3. المساعدات ====================
+// ==================== 3. HELPERS ====================
 function e(?string $s): string { return htmlspecialchars((string)$s, ENT_QUOTES|ENT_SUBSTITUTE, 'UTF-8'); }
 
 function is_safe_url(string $url): bool {
@@ -239,7 +242,7 @@ function notify_telegram(array $link, string $ip, array $geo, array $ua): void {
         'Egypt'=>'🇪🇬','Saudi Arabia'=>'🇸🇦','United States'=>'🇺🇸',
         'United Kingdom'=>'🇬🇧','Germany'=>'🇩🇪','Turkey'=>'🇹🇷',default=>'🌍'
     };
-    $text = "🔔 <b>زيارة جديدة</b>\n\n📎 <code>".e($link['code'])."</code>\n{$flag} {$geo['country']} / {$geo['city']}\n🌐 <code>{$ip}</code>\n📡 {$geo['isp']}\n📱 {$ua['brand']} - {$ua['os']}\n🌐 {$ua['browser']}";
+    $text = "🔔 <b>New Visit</b>\n\n📎 <code>".e($link['code'])."</code>\n{$flag} {$geo['country']} / {$geo['city']}\n🌐 <code>{$ip}</code>\n📡 {$geo['isp']}\n📱 {$ua['brand']} - {$ua['os']}\n🌐 {$ua['browser']}";
     $url = "https://api.telegram.org/bot" . TELEGRAM_BOT_TOKEN . "/sendMessage";
     $ctx = stream_context_create(['http'=>['method'=>'POST','header'=>"Content-Type: application/x-www-form-urlencoded\r\n",'content'=>http_build_query(['chat_id'=>TELEGRAM_CHAT_ID,'text'=>$text,'parse_mode'=>'HTML','disable_web_page_preview'=>'true']),'timeout'=>3]]);
     @file_get_contents($url, false, $ctx);
@@ -263,7 +266,7 @@ function fire_webhooks(array $link, array $payload): void {
     }
 }
 
-// ==================== 4. الراوتر ====================
+// ==================== 4. ROUTER ====================
 $action = $_GET['action'] ?? '';
 
 // ---------- 4.a SSE ----------
@@ -356,7 +359,7 @@ if ($action === 'export_csv') {
     header('Content-Type: text/csv; charset=utf-8');
     header("Content-Disposition: attachment; filename=\"$fname\"");
     $out = fopen('php://output', 'w');
-    fwrite($out, "\xEF\xBB\xBF"); // BOM for Excel Arabic
+    fwrite($out, "\xEF\xBB\xBF"); // BOM for Excel
     $first = true;
     foreach ($s as $row) {
         if ($first) { fputcsv($out, array_keys($row)); $first = false; }
@@ -378,7 +381,7 @@ if ($action === 'public_stats') {
     $dev = $db->prepare("SELECT browser, COUNT(*) c FROM logs WHERE code = ? AND is_bot = 0 GROUP BY browser ORDER BY c DESC LIMIT 6"); $dev->execute([$code]);
     $total = (int)$tot->fetchColumn(); $unique = (int)$uni->fetchColumn();
     $countries = $cnt->fetchAll(); $browsers = $dev->fetchAll();
-    ?><!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>إحصائيات <?= e($link['meta_title']) ?></title>
+    ?><!DOCTYPE html><html lang="en" dir="ltr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stats for <?= e($link['meta_title']) ?></title>
     <style>body{margin:0;padding:20px;font-family:sans-serif;background:#0b0f17;color:#e2e8f0}
     .box{max-width:700px;margin:0 auto;background:#131b2e;border:1px solid #1e293b;border-radius:12px;padding:25px}
     h1{font-size:18px;margin:0 0 5px}.sub{color:#64748b;font-size:12px;margin-bottom:20px}
@@ -390,19 +393,19 @@ if ($action === 'public_stats') {
     .row{display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px}</style></head>
     <body><div class="box">
     <h1><?= e($link['meta_title']) ?></h1>
-    <div class="sub">إحصائيات مباشرة — <a href="<?= e($link['target_url']) ?>" style="color:#38bdf8" target="_blank">زيارة الرابط</a></div>
+    <div class="sub">Live Stats — <a href="<?= e($link['target_url']) ?>" style="color:#38bdf8" target="_blank">Visit Link</a></div>
     <div class="stats">
-        <div class="stat"><div class="l">إجمالي الزيارات</div><div class="v" style="color:#3b82f6"><?= $total ?></div></div>
-        <div class="stat"><div class="l">زوّار فريدون</div><div class="v" style="color:#10b981"><?= $unique ?></div></div>
+        <div class="stat"><div class="l">Total Visits</div><div class="v" style="color:#3b82f6"><?= $total ?></div></div>
+        <div class="stat"><div class="l">Unique Visitors</div><div class="v" style="color:#10b981"><?= $unique ?></div></div>
     </div>
     <?php if ($countries): $mx = max(array_column($countries, 'c')); ?>
-    <h3 style="font-size:13px;color:#94a3b8">أعلى الدول</h3>
+    <h3 style="font-size:13px;color:#94a3b8">Top Countries</h3>
     <?php foreach ($countries as $c): ?>
         <div class="row"><span><?= e($c['country']) ?></span><span><?= $c['c'] ?></span></div>
         <div class="bar"><div style="width:<?= round($c['c']/$mx*100) ?>%"></div></div>
     <?php endforeach; endif; ?>
     <?php if ($browsers): $mx = max(array_column($browsers, 'c')); ?>
-    <h3 style="font-size:13px;color:#94a3b8">المتصفحات</h3>
+    <h3 style="font-size:13px;color:#94a3b8">Browsers</h3>
     <?php foreach ($browsers as $b): ?>
         <div class="row"><span><?= e($b['browser'] ?: 'Unknown') ?></span><span><?= $b['c'] ?></span></div>
         <div class="bar"><div style="width:<?= round($b['c']/$mx*100) ?>%;background:#10b981"></div></div>
@@ -411,7 +414,7 @@ if ($action === 'public_stats') {
     exit;
 }
 
-// ---------- 4.f حذف/تعديل رابط ----------
+// ---------- 4.f Link Actions ----------
 if ($action === 'link_action' && $_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_SESSION['auth'])) {
     header('Content-Type: application/json');
     $db = db(); $op = $_POST['op'] ?? ''; $code = $_POST['code'] ?? '';
@@ -484,7 +487,7 @@ if ($action === 'bulk_create' && $_SERVER['REQUEST_METHOD'] === 'POST' && !empty
     die(json_encode(['ok'=>true,'results'=>$results]));
 }
 
-// ---------- 4.j redirect / التقاط البصمة ----------
+// ---------- 4.j Redirect / Fingerprint ----------
 if (isset($_GET['r'])) {
     $code = $_GET['r'];
     if (!preg_match('/^[a-zA-Z0-9]{4,16}$/', $code)) { http_response_code(404); exit('Not found'); }
@@ -498,18 +501,18 @@ if (isset($_GET['r'])) {
     $ip = get_real_ip();
     if (is_ip_blacklisted($ip)) { http_response_code(403); exit('Access denied'); }
 
-    // Password gate
+    // Password Gate
     if (!empty($link['password_hash']) && empty($_SESSION['unlocked_' . $code])) {
         $err = '';
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['password'])) {
             if (password_verify($_POST['password'], $link['password_hash'])) { $_SESSION['unlocked_' . $code] = true; header("Location: ?r={$code}"); exit; }
-            $err = 'كلمة مرور خاطئة';
+            $err = 'Incorrect password';
         }
-        ?><!DOCTYPE html><html lang="ar"><head><meta charset="UTF-8"><title>محمي</title><style>body{margin:0;height:100vh;display:flex;justify-content:center;align-items:center;background:#0b0f17;color:#e2e8f0;font-family:sans-serif}.box{background:#131b2e;padding:30px;border-radius:12px;border:1px solid #1e293b;width:340px;text-align:center}h3{margin:0 0 20px;font-size:16px}input{width:100%;padding:12px;background:#0f172a;border:1px solid #1e293b;border-radius:6px;color:#fff;box-sizing:border-box;margin-bottom:12px}button{width:100%;padding:12px;background:#3b82f6;color:#fff;border:none;border-radius:6px;font-weight:600;cursor:pointer}.err{color:#ef4444;font-size:13px;margin-bottom:10px}</style></head><body><form class="box" method="POST"><h3>🔒 رابط محمي</h3><?php if ($err): ?><div class="err"><?= e($err) ?></div><?php endif; ?><input type="password" name="password" placeholder="كلمة المرور" required autofocus><button>دخول</button></form></body></html><?php
+        ?><!DOCTYPE html><html lang="en" dir="ltr"><head><meta charset="UTF-8"><title>Protected</title><style>body{margin:0;height:100vh;display:flex;justify-content:center;align-items:center;background:#0b0f17;color:#e2e8f0;font-family:sans-serif}.box{background:#131b2e;padding:30px;border-radius:12px;border:1px solid #1e293b;width:340px;text-align:center}h3{margin:0 0 20px;font-size:16px}input{width:100%;padding:12px;background:#0f172a;border:1px solid #1e293b;border-radius:6px;color:#fff;box-sizing:border-box;margin-bottom:12px}button{width:100%;padding:12px;background:#3b82f6;color:#fff;border:none;border-radius:6px;font-weight:600;cursor:pointer}.err{color:#ef4444;font-size:13px;margin-bottom:10px}</style></head><body><form class="box" method="POST"><h3>🔒 Protected Link</h3><?php if ($err): ?><div class="err"><?= e($err) ?></div><?php endif; ?><input type="password" name="password" placeholder="Enter password" required autofocus><button>Enter</button></form></body></html><?php
         exit;
     }
 
-    // A/B variant
+    // A/B Variant
     $target = $link['target_url'];
     if ((int)($link['ab_mode'] ?? 0) === 1) {
         $vs = $db->prepare("SELECT variant_url, weight FROM ab_variants WHERE code = ?"); $vs->execute([$code]);
@@ -524,8 +527,8 @@ if (isset($_GET['r'])) {
     $geo = get_ip_details($ip);
     $allow = array_filter(array_map('trim', explode(',', $link['allow_countries'] ?? '')));
     $block = array_filter(array_map('trim', explode(',', $link['block_countries'] ?? '')));
-    if ($allow && !in_array($geo['country'], $allow, true)) { http_response_code(403); exit('Not available'); }
-    if ($block && in_array($geo['country'], $block, true)) { http_response_code(403); exit('Not available'); }
+    if ($allow && !in_array($geo['country'], $allow, true)) { http_response_code(403); exit('Not available in your region'); }
+    if ($block && in_array($geo['country'], $block, true)) { http_response_code(403); exit('Not available in your region'); }
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['log_visit'] ?? '') === '1') {
         header('Content-Type: application/json');
@@ -559,12 +562,12 @@ if (isset($_GET['r'])) {
     $og_title = $link['meta_title'] ?: 'Redirecting...';
     $og_image = $link['meta_image'] ?: DEFAULT_OG_IMAGE;
 
-    // Retargeting pixels
+    // Retargeting Pixels
     $pixels = '';
     if (!empty($link['meta_pixel'])) $pixels .= "!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');fbq('init','".e($link['meta_pixel'])."');fbq('track','PageView');";
     if (!empty($link['tiktok_pixel'])) $pixels .= "!function(w,d,t){w.TiktokAnalyticsObject=t;var ttq=w[t]=w[t]||[];ttq.methods=['page','track','identify','instances','debug','on','off','once','ready','alias','group','enableCookie','disableCookie'];ttq.setAndDefer=function(t,e){t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}};for(var i=0;i<ttq.methods.length;i++)ttq.setAndDefer(ttq,ttq.methods[i]);ttq.load=function(e,n){var r='https://analytics.tiktok.com/i18n/pixel/events.js';ttq._i=ttq._i||{};ttq._i[e]=[];ttq._i[e]._u=r;ttq._t=ttq._t||{};ttq._t[e]=+new Date;ttq._o=ttq._o||{};ttq._o[e]=n||{};var o=document.createElement('script');o.type='text/javascript';o.async=!0;o.src=r+'?sdkid='+e+'&lib='+t;var a=document.getElementsByTagName('script')[0];a.parentNode.insertBefore(o,a)};ttq.load('".e($link['tiktok_pixel'])."');ttq.page()}(window,document,'ttq');";
     if (!empty($link['google_tag'])) $pixels .= "(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','".e($link['google_tag'])."');";
-    ?><!DOCTYPE html><html lang="ar"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title><?= e($og_title) ?></title><meta property="og:title" content="<?= e($og_title) ?>"><meta property="og:image" content="<?= e($og_image) ?>"><meta property="og:type" content="website"><style>body{margin:0;background:#000;color:#fff;font-family:sans-serif;height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:20px}.loader{width:48px;height:48px;border:4px solid rgba(255,255,255,.1);border-left-color:#ff0000;border-radius:50%;animation:s 1s linear infinite}@keyframes s{to{transform:rotate(360deg)}}.tip{color:#64748b;font-size:12px}</style><?= $pixels ?></head><body><div class="loader"></div><div class="tip">جارٍ التحقق...</div><script>
+    ?><!DOCTYPE html><html lang="en" dir="ltr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title><?= e($og_title) ?></title><meta property="og:title" content="<?= e($og_title) ?>"><meta property="og:image" content="<?= e($og_image) ?>"><meta property="og:type" content="website"><style>body{margin:0;background:#000;color:#fff;font-family:sans-serif;height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:20px}.loader{width:48px;height:48px;border:4px solid rgba(255,255,255,.1);border-left-color:#ff0000;border-radius:50%;animation:s 1s linear infinite}@keyframes s{to{transform:rotate(360deg)}}.tip{color:#64748b;font-size:12px}</style><?= $pixels ?></head><body><div class="loader"></div><div class="tip">Verifying...</div><script>
     async function sha256(str){const b=new TextEncoder().encode(str);const h=await crypto.subtle.digest('SHA-256',b);return Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,'0')).join('').slice(0,32)}
     function getLocalIP(){return new Promise(res=>{const R=window.RTCPeerConnection||window.webkitRTCPeerConnection;if(!R)return res('');const pc=new R({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});pc.createDataChannel('');pc.createOffer().then(o=>pc.setLocalDescription(o)).catch(()=>{});let f=false;pc.onicecandidate=e=>{if(!e||!e.candidate)return;const m=/([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate);if(m&&/^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(m[1])){f=true;res(m[1]);pc.onicecandidate=null;pc.close()}};setTimeout(()=>{if(!f){res('');pc.close()}},800)})}
     async function collectFP(){const fp={};fp.screen=`${screen.width}x${screen.height}x${screen.colorDepth}`;fp.tz=Intl.DateTimeFormat().resolvedOptions().timeZone;fp.lang=navigator.language;fp.cores=navigator.hardwareConcurrency||0;fp.memory=navigator.deviceMemory||0;fp.touch='ontouchstart'in window?1:0;
@@ -580,14 +583,14 @@ if (isset($_GET['r'])) {
     exit;
 }
 
-// ==================== 5. معالجة POST ====================
+// ==================== 5. POST ACTIONS ====================
 $generated_link = ''; $tracking_code = ''; $generated_title = ''; $create_error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create']) && !empty($_SESSION['auth'])) {
-    if (!rate_limit('create:' . get_real_ip(), RATE_LIMIT_CREATE, 3600)) { $create_error = 'تجاوزت الحد. حاول بعد قليل.'; }
+    if (!rate_limit('create:' . get_real_ip(), RATE_LIMIT_CREATE, 3600)) { $create_error = 'Rate limit exceeded. Try again later.'; }
     else {
         $target_url = trim($_POST['target_url'] ?? '');
         if (!filter_var($target_url, FILTER_VALIDATE_URL)) $target_url = 'https://' . $target_url;
-        if (!is_safe_url($target_url)) $create_error = 'الرابط غير صالح.';
+        if (!is_safe_url($target_url)) $create_error = 'Invalid or unsafe URL.';
         else {
             $meta = fetch_real_meta($target_url);
             $code = generate_code();
@@ -609,20 +612,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create']) && !empty($
     }
 }
 
-// ==================== 6. تسجيل الدخول ====================
+// ==================== 6. LOGIN ====================
 $login_error = '';
 if (($_POST['login'] ?? '') === '1') {
     if (hash_equals(DASHBOARD_PASSWORD, $_POST['pw'] ?? '')) { $_SESSION['auth'] = true; header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?')); exit; }
-    $login_error = 'كلمة مرور خاطئة';
+    $login_error = 'Incorrect password';
 }
 if (($_GET['logout'] ?? '') === '1') { session_destroy(); header('Location: /'); exit; }
 
 if (empty($_SESSION['auth'])) {
-    ?><!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>دخول</title><style>body{margin:0;height:100vh;display:flex;justify-content:center;align-items:center;background:#0b0f17;color:#e2e8f0;font-family:sans-serif}.box{background:#131b2e;padding:30px;border-radius:12px;border:1px solid #1e293b;width:340px;text-align:center}h3{margin:0 0 20px}input{width:100%;padding:12px;background:#0f172a;border:1px solid #1e293b;border-radius:6px;color:#fff;box-sizing:border-box;margin-bottom:12px}button{width:100%;padding:12px;background:#3b82f6;color:#fff;border:none;border-radius:6px;font-weight:600;cursor:pointer}.err{color:#ef4444;font-size:13px;margin-bottom:10px}</style></head><body><form class="box" method="POST"><h3>🔐 لوحة التحكم</h3><?php if ($login_error): ?><div class="err"><?= e($login_error) ?></div><?php endif; ?><input type="password" name="pw" placeholder="كلمة المرور" required autofocus><input type="hidden" name="login" value="1"><button>دخول</button></form></body></html><?php
+    ?><!DOCTYPE html><html lang="en" dir="ltr"><head><meta charset="UTF-8"><title>Login</title><style>body{margin:0;height:100vh;display:flex;justify-content:center;align-items:center;background:#0b0f17;color:#e2e8f0;font-family:sans-serif}.box{background:#131b2e;padding:30px;border-radius:12px;border:1px solid #1e293b;width:340px;text-align:center}h3{margin:0 0 20px}input{width:100%;padding:12px;background:#0f172a;border:1px solid #1e293b;border-radius:6px;color:#fff;box-sizing:border-box;margin-bottom:12px}button{width:100%;padding:12px;background:#3b82f6;color:#fff;border:none;border-radius:6px;font-weight:600;cursor:pointer}.err{color:#ef4444;font-size:13px;margin-bottom:10px}</style></head><body><form class="box" method="POST"><h3>🔐 Dashboard Login</h3><?php if ($login_error): ?><div class="err"><?= e($login_error) ?></div><?php endif; ?><input type="password" name="pw" placeholder="Password" required autofocus><input type="hidden" name="login" value="1"><button>Login</button></form></body></html><?php
     exit;
 }
 
-// ==================== 7. لوحة التحكم ====================
+// ==================== 7. DASHBOARD ====================
 $filter_code = trim($_GET['track'] ?? '');
 $db = db();
 if ($filter_code) {
@@ -635,7 +638,7 @@ $all_links = $db->query("SELECT * FROM links ORDER BY id DESC LIMIT 100")->fetch
 $blacklist = $db->query("SELECT * FROM ip_blacklist ORDER BY id DESC LIMIT 50")->fetchAll();
 $webhooks = $db->query("SELECT * FROM webhooks ORDER BY id DESC LIMIT 30")->fetchAll();
 ?><!DOCTYPE html>
-<html lang="ar" dir="rtl"><head>
+<html lang="en" dir="ltr"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title><?= e(APP_NAME) ?></title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
@@ -668,7 +671,7 @@ textarea{resize:vertical;min-height:80px}
 .search-form{display:flex;gap:8px;max-width:400px;width:100%}
 .table-wrap{overflow-x:auto;border:1px solid var(--border-color);border-radius:6px}
 table{width:100%;border-collapse:collapse;font-size:12px;min-width:900px}
-th{background:#0f172a;color:var(--text-muted);padding:10px 12px;border-bottom:1px solid var(--border-color);font-weight:600;text-transform:uppercase;text-align:right;font-size:11px}
+th{background:#0f172a;color:var(--text-muted);padding:10px 12px;border-bottom:1px solid var(--border-color);font-weight:600;text-transform:uppercase;text-align:left;font-size:11px}
 td{padding:10px 12px;border-bottom:1px solid var(--border-color);color:#cbd5e1;white-space:nowrap}
 tr:hover{background:rgba(30,41,59,.4)}
 .code-badge{background:rgba(59,130,246,.1);color:#38bdf8;padding:3px 7px;border-radius:4px;font-family:monospace;border:1px solid rgba(59,130,246,.2)}
@@ -697,16 +700,16 @@ details > div{margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit
 <body>
 <div class="wrapper">
 
-<!-- إنشاء رابط -->
+<!-- Generate Link -->
 <section class="section-box">
-<h2>🔗 إنشاء رابط تتبع</h2>
+<h2>🔗 Generate Tracking Link</h2>
 <form method="POST">
-<div class="form-row"><input type="text" name="target_url" placeholder="الرابط المستهدف (https://...)" required><button type="submit" name="create" class="btn">توليد</button></div>
-<details><summary>⚙️ خيارات متقدمة (كلمة مرور، انتهاء، بيكسل، ...)</summary>
+<div class="form-row"><input type="text" name="target_url" placeholder="Target URL (https://...)" required><button type="submit" name="create" class="btn">Generate</button></div>
+<details><summary>⚙️ Advanced Options (Password, Expiry, Pixels...)</summary>
 <div>
-<input type="password" name="password" placeholder="كلمة مرور (اختياري)">
+<input type="password" name="password" placeholder="Password (optional)">
 <input type="datetime-local" name="expires_at">
-<input type="number" name="max_clicks" placeholder="حد أقصى للزيارات" min="0">
+<input type="number" name="max_clicks" placeholder="Max Clicks" min="0">
 <input type="text" name="meta_pixel" placeholder="Meta Pixel ID">
 <input type="text" name="tiktok_pixel" placeholder="TikTok Pixel ID">
 <input type="text" name="google_tag" placeholder="Google Tag / GTM ID">
@@ -716,49 +719,49 @@ details > div{margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit
 <?php if ($create_error): ?><div style="color:#ef4444;font-size:13px;margin-top:10px">⚠️ <?= e($create_error) ?></div><?php endif; ?>
 <?php if ($generated_link): ?>
 <div class="result-panel">
-<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;margin-bottom:5px">الرابط الجاهز</div>
+<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;margin-bottom:5px">Generated Link</div>
 <div class="link-flex">
 <input type="text" readonly value="<?= e($generated_link) ?>" id="genLink">
-<button class="btn btn-secondary" onclick="copyIt(document.getElementById('genLink').value,this)">نسخ</button>
+<button class="btn btn-secondary" onclick="copyIt(document.getElementById('genLink').value,this)">Copy</button>
 <button class="btn" onclick="showQR('<?= e($generated_link) ?>','<?= e($tracking_code) ?>')">📱 QR</button>
 </div>
 <div class="big-code-box">
-<span>رمز التتبع</span>
+<span>Tracking Code</span>
 <div class="big-code-val"><?= e($tracking_code) ?></div>
 <div style="font-size:11px;color:#64748b;margin-top:6px"><?= e($generated_title) ?></div>
 </div>
 <div style="margin-top:10px;display:flex;justify-content:space-between;font-size:12px;flex-wrap:wrap;gap:8px">
-<a href="?track=<?= e($tracking_code) ?>" style="color:#38bdf8;text-decoration:none">عرض إحصائيات هذا الرابط ←</a>
-<a href="?action=public_stats&code=<?= e($tracking_code) ?>" target="_blank" style="color:#10b981;text-decoration:none">🔗 صفحة إحصائيات عامة</a>
+<a href="?track=<?= e($tracking_code) ?>" style="color:#38bdf8;text-decoration:none">View stats for this link →</a>
+<a href="?action=public_stats&code=<?= e($tracking_code) ?>" target="_blank" style="color:#10b981;text-decoration:none">🔗 Public Stats Page</a>
 </div>
 </div>
 <?php endif; ?>
 </section>
 
-<!-- Bulk create + إدارة الروابط -->
+<!-- My Links -->
 <section class="section-box">
-<div class="toolbar"><h2>📋 روابطي (<?= count($all_links) ?>)</h2>
-<button class="btn btn-secondary btn-sm" onclick="toggleBulk()">➕ إنشاء متعدد</button></div>
+<div class="toolbar"><h2>📋 My Links (<?= count($all_links) ?>)</h2>
+<button class="btn btn-secondary btn-sm" onclick="toggleBulk()">➕ Bulk Create</button></div>
 <div id="bulkBox" style="display:none;margin-bottom:15px;padding:15px;background:#0f172a;border-radius:6px">
-<textarea id="bulkUrls" placeholder="رابط واحد في كل سطر (حد أقصى 50)"></textarea>
-<button class="btn" style="margin-top:8px" onclick="bulkCreate()">إنشاء الكل</button>
+<textarea id="bulkUrls" placeholder="One URL per line (max 50)"></textarea>
+<button class="btn" style="margin-top:8px" onclick="bulkCreate()">Create All</button>
 <div id="bulkResult" style="margin-top:10px;font-size:12px"></div>
 </div>
 <div class="table-wrap">
 <table>
-<thead><tr><th>الكود</th><th>العنوان</th><th>الزيارات</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+<thead><tr><th>Code</th><th>Title</th><th>Visits</th><th>Status</th><th>Actions</th></tr></thead>
 <tbody>
-<?php if (empty($all_links)): ?><tr><td colspan="5" style="text-align:center;color:#64748b;padding:20px">لا توجد روابط</td></tr>
+<?php if (empty($all_links)): ?><tr><td colspan="5" style="text-align:center;color:#64748b;padding:20px">No links found</td></tr>
 <?php else: foreach ($all_links as $l): ?>
 <tr data-code="<?= e($l['code']) ?>">
 <td><span class="code-badge"><?= e($l['code']) ?></span></td>
 <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;color:#cbd5e1"><?= e(mb_substr($l['meta_title'] ?: $l['target_url'], 0, 60)) ?></td>
 <td style="color:#10b981;font-weight:600"><?= (int)$l['click_count'] ?></td>
-<td><span class="tag <?= (int)$l['is_active'] ? 'tag-on' : 'tag-off' ?>"><?= (int)$l['is_active'] ? 'نشط' : 'معطّل' ?></span></td>
+<td><span class="tag <?= (int)$l['is_active'] ? 'tag-on' : 'tag-off' ?>"><?= (int)$l['is_active'] ? 'Active' : 'Disabled' ?></span></td>
 <td>
-<button class="btn btn-secondary btn-sm" onclick="showQR('<?= e(BASE_URL_X = (isset($_SERVER['HTTPS'])?'https':'http') . '://' . $_SERVER['HTTP_HOST'] . '/index.php?r=') ?><?= e($l['code']) ?>','<?= e($l['code']) ?>')">QR</button>
-<button class="btn btn-secondary btn-sm" onclick="toggleActive('<?= e($l['code']) ?>',this)"><?= (int)$l['is_active'] ? 'تعطيل' : 'تفعيل' ?></button>
-<button class="btn btn-danger btn-sm" onclick="delLink('<?= e($l['code']) ?>')">حذف</button>
+<button class="btn btn-secondary btn-sm" onclick="showQR('<?= (isset($_SERVER['HTTPS'])?'https':'http') . '://' . $_SERVER['HTTP_HOST'] . '/index.php?r=' . e($l['code']) ?>','<?= e($l['code']) ?>')">QR</button>
+<button class="btn btn-secondary btn-sm" onclick="toggleActive('<?= e($l['code']) ?>',this)"><?= (int)$l['is_active'] ? 'Disable' : 'Enable' ?></button>
+<button class="btn btn-danger btn-sm" onclick="delLink('<?= e($l['code']) ?>')">Delete</button>
 </td>
 </tr>
 <?php endforeach; endif; ?>
@@ -767,48 +770,48 @@ details > div{margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit
 </div>
 </section>
 
-<!-- إحصائيات -->
+<!-- Stats -->
 <div class="grid-stats">
-<div class="stat-card"><div class="label">إجمالي الزيارات</div><div class="val" id="totalCount" style="color:#3b82f6">0</div></div>
-<div class="stat-card"><div class="label">زوّار فريدون</div><div class="val" id="uniqueCount" style="color:#10b981">0</div></div>
-<div class="stat-card"><div class="label">بوتات محجوبة</div><div class="val" id="botCount" style="color:#ef4444">0</div></div>
-<div class="stat-card"><div class="label">حالة البث</div><div class="val" id="liveStatus" style="font-size:16px;color:#64748b">—</div>
-<button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="enableNotif()">🔔 تنبيهات</button></div>
+<div class="stat-card"><div class="label">Total Visits</div><div class="val" id="totalCount" style="color:#3b82f6">0</div></div>
+<div class="stat-card"><div class="label">Unique Visitors</div><div class="val" id="uniqueCount" style="color:#10b981">0</div></div>
+<div class="stat-card"><div class="label">Bots Blocked</div><div class="val" id="botCount" style="color:#ef4444">0</div></div>
+<div class="stat-card"><div class="label">Live Status</div><div class="val" id="liveStatus" style="font-size:16px;color:#64748b">—</div>
+<button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="enableNotif()">🔔 Notifications</button></div>
 </div>
 
 <div class="grid-charts">
-<div class="section-box"><h2>🌍 خريطة الزيارات</h2><div id="worldMap"></div></div>
+<div class="section-box"><h2>🌍 Visitor Map</h2><div id="worldMap"></div></div>
 <div>
-<div class="section-box" style="margin-bottom:12px"><h2>📊 أعلى الدول</h2><canvas id="countryChart" height="170"></canvas></div>
-<div class="section-box"><h2>📈 آخر 24 ساعة</h2><canvas id="hourChart" height="100"></canvas></div>
+<div class="section-box" style="margin-bottom:12px"><h2>📊 Top Countries</h2><canvas id="countryChart" height="170"></canvas></div>
+<div class="section-box"><h2>📈 Last 24 Hours</h2><canvas id="hourChart" height="100"></canvas></div>
 </div>
 </div>
 
 <section class="section-box">
-<h2>🔥 خريطة حرارية — آخر 7 أيام × 24 ساعة</h2>
+<h2>🔥 Heatmap (Last 7 Days × 24 Hours)</h2>
 <div id="heatmap" style="grid-template-columns:80px repeat(24,1fr)"></div>
 </section>
 
-<!-- السجلات -->
+<!-- Logs -->
 <section class="section-box">
 <div class="toolbar">
-<h2>📋 سجل الزيارات الحي</h2>
+<h2>📋 Live Visitor Logs</h2>
 <form method="GET" class="search-form">
-<input type="text" name="track" placeholder="بحث برمز التتبع..." value="<?= e($filter_code) ?>">
-<button type="submit" class="btn">بحث</button>
-<?php if ($filter_code): ?><a href="?" class="btn btn-danger" style="display:flex;align-items:center;text-decoration:none">إلغاء</a><?php endif; ?>
+<input type="text" name="track" placeholder="Search by tracking code..." value="<?= e($filter_code) ?>">
+<button type="submit" class="btn">Search</button>
+<?php if ($filter_code): ?><a href="?" class="btn btn-danger" style="display:flex;align-items:center;text-decoration:none">Cancel</a><?php endif; ?>
 </form>
 <div style="display:flex;gap:6px">
 <a href="?action=export_csv<?= $filter_code ? '&code='.e($filter_code) : '' ?>" class="btn btn-success">📥 CSV</a>
 <button class="btn btn-secondary" onclick="exportPDF()">📄 PDF</button>
-<a href="?logout=1" class="btn btn-danger">خروج</a>
+<a href="?logout=1" class="btn btn-danger">Logout</a>
 </div>
 </div>
 <div class="table-wrap" id="logsTable">
 <table>
-<thead><tr><th>#</th><th>الكود</th><th>IP عام</th><th>IP محلي</th><th>الجهاز</th><th>المتصفح</th><th>الموقع</th><th>ISP</th><th>الشاشة</th><th>الوقت</th></tr></thead>
+<thead><tr><th>#</th><th>Code</th><th>Public IP</th><th>Local IP</th><th>Device</th><th>Browser</th><th>Location</th><th>ISP</th><th>Screen</th><th>Time</th></tr></thead>
 <tbody id="logsBody">
-<?php if (empty($logs)): ?><tr><td colspan="10" style="text-align:center;color:#64748b;padding:30px">لا توجد زيارات بعد</td></tr>
+<?php if (empty($logs)): ?><tr><td colspan="10" style="text-align:center;color:#64748b;padding:30px">No visits yet</td></tr>
 <?php else: foreach ($logs as $log): ?>
 <tr><td><?= (int)$log['id'] ?></td>
 <td><span class="code-badge"><?= e($log['code']) ?></span></td>
@@ -816,7 +819,7 @@ details > div{margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit
 <td class="ip-local"><?= e($log['local_ip'] ?? '—') ?></td>
 <td><?= e($log['device_info']) ?></td>
 <td><?= e($log['browser'] ?? '—') ?></td>
-<td><?= e($log['country']) ?> / <?= e($log['city']) ?><br><a href="https://www.google.com/maps?q=<?= e($log['lat']) ?>,<?= e($log['lon']) ?>" target="_blank" style="font-size:10px;color:#38bdf8;text-decoration:none">خريطة ↗</a></td>
+<td><?= e($log['country']) ?> / <?= e($log['city']) ?><br><a href="https://www.google.com/maps?q=<?= e($log['lat']) ?>,<?= e($log['lon']) ?>" target="_blank" style="font-size:10px;color:#38bdf8;text-decoration:none">Map ↗</a></td>
 <td style="color:#38bdf8"><?= e($log['isp']) ?></td>
 <td><?= e($log['screen_res'] ?: '—') ?></td>
 <td style="color:#10b981;font-weight:500"><?= e($log['created_at']) ?></td></tr>
@@ -830,21 +833,21 @@ details > div{margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit
 <section class="section-box">
 <h2>🔗 Webhooks</h2>
 <form onsubmit="addWebhook(event)" style="display:grid;grid-template-columns:1fr 2fr 1fr auto;gap:8px;margin-bottom:12px">
-<input type="text" name="code" placeholder="كود (فارغ = الجميع)">
+<input type="text" name="code" placeholder="Code (empty = all)">
 <input type="text" name="url" placeholder="https://your-server.com/webhook" required>
-<input type="text" name="secret" placeholder="Secret (اختياري)">
-<button type="submit" class="btn">إضافة</button>
+<input type="text" name="secret" placeholder="Secret (optional)">
+<button type="submit" class="btn">Add</button>
 </form>
 <div class="table-wrap">
-<table><thead><tr><th>#</th><th>الكود</th><th>URL</th><th>الحالة</th><th></th></tr></thead><tbody>
+<table><thead><tr><th>#</th><th>Code</th><th>URL</th><th>Status</th><th></th></tr></thead><tbody>
 <?php foreach ($webhooks as $w): ?>
 <tr><td><?= (int)$w['id'] ?></td>
 <td><span class="code-badge"><?= e($w['code'] ?: 'ALL') ?></span></td>
 <td style="max-width:400px;overflow:hidden;text-overflow:ellipsis"><?= e($w['url']) ?></td>
-<td><span class="tag <?= (int)$w['is_active']?'tag-on':'tag-off' ?>"><?= (int)$w['is_active']?'مفعل':'معطل' ?></span></td>
-<td><button class="btn btn-danger btn-sm" onclick="delWebhook(<?= (int)$w['id'] ?>)">حذف</button></td></tr>
+<td><span class="tag <?= (int)$w['is_active']?'tag-on':'tag-off' ?>"><?= (int)$w['is_active']?'Active':'Disabled' ?></span></td>
+<td><button class="btn btn-danger btn-sm" onclick="delWebhook(<?= (int)$w['id'] ?>)">Delete</button></td></tr>
 <?php endforeach; if (empty($webhooks)): ?>
-<tr><td colspan="5" style="text-align:center;color:#64748b;padding:15px">لا توجد webhooks</td></tr>
+<tr><td colspan="5" style="text-align:center;color:#64748b;padding:15px">No webhooks configured</td></tr>
 <?php endif; ?>
 </tbody></table>
 </div>
@@ -852,19 +855,19 @@ details > div{margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit
 
 <!-- IP Blacklist -->
 <section class="section-box">
-<h2>🚫 قائمة IP المحجوبة</h2>
+<h2>🚫 IP Blacklist</h2>
 <form onsubmit="addBlacklist(event)" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
 <input type="text" name="ip" placeholder="192.168.1.1" required style="max-width:200px;flex:none">
-<input type="text" name="reason" placeholder="السبب (اختياري)">
-<button type="submit" class="btn btn-danger">حجب</button>
+<input type="text" name="reason" placeholder="Reason (optional)">
+<button type="submit" class="btn btn-danger">Block</button>
 </form>
 <div class="table-wrap">
-<table><thead><tr><th>#</th><th>IP</th><th>السبب</th><th>تاريخ</th><th></th></tr></thead><tbody>
+<table><thead><tr><th>#</th><th>IP</th><th>Reason</th><th>Date</th><th></th></tr></thead><tbody>
 <?php foreach ($blacklist as $b): ?>
 <tr><td><?= (int)$b['id'] ?></td><td class="ip-public"><?= e($b['ip']) ?></td><td><?= e($b['reason'] ?: '—') ?></td><td style="color:#64748b"><?= e($b['created_at']) ?></td>
-<td><button class="btn btn-secondary btn-sm" onclick="delBlacklist(<?= (int)$b['id'] ?>)">إزالة</button></td></tr>
+<td><button class="btn btn-secondary btn-sm" onclick="delBlacklist(<?= (int)$b['id'] ?>)">Remove</button></td></tr>
 <?php endforeach; if (empty($blacklist)): ?>
-<tr><td colspan="5" style="text-align:center;color:#64748b;padding:15px">لا توجد عناوين محجوبة</td></tr>
+<tr><td colspan="5" style="text-align:center;color:#64748b;padding:15px">No IPs blocked</td></tr>
 <?php endif; ?>
 </tbody></table>
 </div>
@@ -875,64 +878,53 @@ details > div{margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit
 
 <!-- QR Modal -->
 <div class="modal" id="qrModal" onclick="if(event.target===this)closeModal('qrModal')">
-<div class="modal-inner"><h3 style="margin-bottom:15px">📱 رمز QR</h3>
+<div class="modal-inner"><h3 style="margin-bottom:15px">📱 QR Code</h3>
 <div id="qrBox" style="background:#fff;padding:15px;border-radius:8px;display:inline-block;margin-bottom:12px"></div>
 <div class="link-flex" style="justify-content:center">
-<button class="btn btn-secondary" onclick="downloadQR()">تحميل PNG</button>
-<button class="btn" onclick="closeModal('qrModal')">إغلاق</button>
+<button class="btn btn-secondary" onclick="downloadQR()">Download PNG</button>
+<button class="btn" onclick="closeModal('qrModal')">Close</button>
 </div>
 </div></div>
 
 <script>
-// Utils
 function copyIt(t,el){navigator.clipboard.writeText(t).then(()=>{const o=el.innerText;el.innerText='✓';el.style.background='#10b981';setTimeout(()=>{el.innerText=o;el.style.background=''},1500)})}
 function closeModal(id){document.getElementById(id).classList.remove('open')}
 
-// QR
 let currentQRUrl='';
 function showQR(url,code){document.getElementById('qrBox').innerHTML='';new QRCode(document.getElementById('qrBox'),{text:url,width:220,height:220,correctLevel:QRCode.CorrectLevel.H});currentQRUrl=url;document.getElementById('qrModal').classList.add('open')}
 function downloadQR(){const c=document.querySelector('#qrBox canvas');if(!c)return;const a=document.createElement('a');a.download='qr_'+Date.now()+'.png';a.href=c.toDataURL('image/png');a.click()}
 
-// Toggle bulk
 function toggleBulk(){const b=document.getElementById('bulkBox');b.style.display=b.style.display==='none'?'block':'none'}
 
-// Link actions
 async function toggleActive(code,btn){const r=await fetch('?action=link_action',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:`op=toggle&code=${encodeURIComponent(code)}`});const d=await r.json();if(d.ok){location.reload()}}
-async function delLink(code){if(!confirm('حذف الرابط '+code+'؟'))return;const r=await fetch('?action=link_action',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:`op=delete&code=${encodeURIComponent(code)}`});const d=await r.json();if(d.ok)document.querySelector(`tr[data-code="${code}"]`)?.remove()}
+async function delLink(code){if(!confirm('Delete link '+code+'?'))return;const r=await fetch('?action=link_action',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:`op=delete&code=${encodeURIComponent(code)}`});const d=await r.json();if(d.ok)document.querySelector(`tr[data-code="${code}"]`)?.remove()}
 
-// Bulk create
 async function bulkCreate(){const urls=document.getElementById('bulkUrls').value;if(!urls.trim())return;const r=await fetch('?action=bulk_create',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:`urls=${encodeURIComponent(urls)}`});const d=await r.json();
-const out=document.getElementById('bulkResult');if(d.error){out.innerHTML='<div style="color:#ef4444">خطأ: '+d.error+'</div>';return}
+const out=document.getElementById('bulkResult');if(d.error){out.innerHTML='<div style="color:#ef4444">Error: '+d.error+'</div>';return}
 out.innerHTML=d.results.map(x=>x.error?`<div style="color:#ef4444">❌ ${x.url} — ${x.error}</div>`:`<div style="color:#10b981">✅ <code>${x.code}</code> — ${x.url}</div>`).join('');setTimeout(()=>location.reload(),2500)}
 
-// Webhook
-async function addWebhook(e){e.preventDefault();const f=new FormData(e.target);const r=await fetch('?action=webhook_add',{method:'POST',body:f});const d=await r.json();if(d.ok)location.reload();else alert('خطأ: '+(d.error||'?'))}
-async function delWebhook(id){if(!confirm('حذف؟'))return;const r=await fetch('?action=webhook_delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'id='+id});const d=await r.json();if(d.ok)location.reload()}
+async function addWebhook(e){e.preventDefault();const f=new FormData(e.target);const r=await fetch('?action=webhook_add',{method:'POST',body:f});const d=await r.json();if(d.ok)location.reload();else alert('Error: '+(d.error||'?'))}
+async function delWebhook(id){if(!confirm('Delete?'))return;const r=await fetch('?action=webhook_delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'id='+id});const d=await r.json();if(d.ok)location.reload()}
 
-// Blacklist
-async function addBlacklist(e){e.preventDefault();const f=new FormData(e.target);const r=await fetch('?action=blacklist_add',{method:'POST',body:f});const d=await r.json();if(d.ok)location.reload();else alert('خطأ: '+(d.error||'?'))}
-async function delBlacklist(id){if(!confirm('إزالة الحجب؟'))return;const r=await fetch('?action=blacklist_remove',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'id='+id});const d=await r.json();if(d.ok)location.reload()}
+async function addBlacklist(e){e.preventDefault();const f=new FormData(e.target);const r=await fetch('?action=blacklist_add',{method:'POST',body:f});const d=await r.json();if(d.ok)location.reload();else alert('Error: '+(d.error||'?'))}
+async function delBlacklist(id){if(!confirm('Remove from blacklist?'))return;const r=await fetch('?action=blacklist_remove',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'id='+id});const d=await r.json();if(d.ok)location.reload()}
 
-// PDF export
 function exportPDF(){const el=document.getElementById('logsTable');html2pdf().from(el).set({margin:10,filename:'tracker_logs_'+Date.now()+'.pdf',html2canvas:{scale:2},jsPDF:{unit:'mm',format:'a4',orientation:'landscape'}}).save()}
 
-// Notifications
 let notifOn=false;
-async function enableNotif(){if(!('Notification'in window))return alert('غير مدعوم');const p=await Notification.requestPermission();if(p==='granted'){notifOn=true;document.getElementById('liveStatus').innerHTML='<span style="color:#10b981">● متصل</span>'}}
+async function enableNotif(){if(!('Notification'in window))return alert('Not supported');const p=await Notification.requestPermission();if(p==='granted'){notifOn=true;document.getElementById('liveStatus').innerHTML='<span style="color:#10b981">● Connected</span>'}}
 
-// SSE
 function startSSE(){const es=new EventSource('?action=sse');
 es.addEventListener('visit',e=>{const v=JSON.parse(e.data);if(v.is_bot==1)return;const body=document.getElementById('logsBody');const empty=body.querySelector('td[colspan]');if(empty)empty.parentElement.remove();
 const tr=document.createElement('tr');tr.style.background='rgba(59,130,246,.15)';
 tr.innerHTML=`<td>${v.id}</td><td><span class="code-badge">${v.code}</span></td><td class="ip-public">${v.public_ip}</td><td class="ip-local">—</td><td>${v.device_info}</td><td>${v.browser||'—'}</td><td>${v.country} / ${v.city}</td><td style="color:#38bdf8">${v.isp}</td><td>${v.screen_res||'—'}</td><td style="color:#10b981">${v.created_at}</td>`;
 body.prepend(tr);
 const total=document.getElementById('totalCount');total.textContent=(+total.textContent||0)+1;
-if(notifOn)new Notification('👀 زيارة جديدة',{body:`${v.country} — ${v.device_info}`});
+if(notifOn)new Notification('👀 New Visit',{body:`${v.country} — ${v.device_info}`});
 try{new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT').play()}catch(e){}});
-es.onopen=()=>document.getElementById('liveStatus').innerHTML='<span style="color:#10b981">● متصل</span>';
-es.onerror=()=>document.getElementById('liveStatus').innerHTML='<span style="color:#ef4444">● إعادة اتصال</span>'}
+es.onopen=()=>document.getElementById('liveStatus').innerHTML='<span style="color:#10b981">● Connected</span>';
+es.onerror=()=>document.getElementById('liveStatus').innerHTML='<span style="color:#ef4444">● Reconnecting</span>'}
 
-// Charts
 let map=null,countryChart=null,hourChart=null;
 async function loadStats(){const d=await fetch('?action=stats_json').then(r=>r.json()).catch(()=>null);if(!d)return;
 document.getElementById('totalCount').textContent=d.total;
@@ -940,22 +932,21 @@ document.getElementById('uniqueCount').textContent=d.unique;
 document.getElementById('botCount').textContent=d.bots;
 if(!map){map=L.map('worldMap').setView([28,10],2);L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',{attribution:'© OSM'}).addTo(map)}
 map.eachLayer(l=>{if(l instanceof L.CircleMarker)map.removeLayer(l)});
-d.map_points.forEach(p=>{if(!p.lat||!p.lon)return;L.circleMarker([+p.lat,+p.lon],{radius:Math.min(3+Math.log2(+p.c+1)*2,15),color:'#3b82f6',fillColor:'#3b82f6',fillOpacity:.5,weight:1}).bindPopup(`<b>${p.city}, ${p.country}</b><br>${p.c} زيارة`).addTo(map)});
+d.map_points.forEach(p=>{if(!p.lat||!p.lon)return;L.circleMarker([+p.lat,+p.lon],{radius:Math.min(3+Math.log2(+p.c+1)*2,15),color:'#3b82f6',fillColor:'#3b82f6',fillOpacity:.5,weight:1}).bindPopup(`<b>${p.city}, ${p.country}</b><br>${p.c} visits`).addTo(map)});
 if(countryChart)countryChart.destroy();
 countryChart=new Chart(document.getElementById('countryChart'),{type:'doughnut',data:{labels:d.by_country.map(x=>x.country),datasets:[{data:d.by_country.map(x=>x.c),backgroundColor:['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#ec4899','#84cc16']}]},options:{plugins:{legend:{position:'bottom',labels:{color:'#e2e8f0',font:{size:9},boxWidth:10}}}}});
 if(hourChart)hourChart.destroy();
-hourChart=new Chart(document.getElementById('hourChart'),{type:'line',data:{labels:d.by_hour.map(x=>x.h+':00'),datasets:[{label:'زيارات',data:d.by_hour.map(x=>x.c),borderColor:'#3b82f6',backgroundColor:'rgba(59,130,246,.2)',fill:true,tension:.4,pointRadius:2}]},options:{plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#64748b',font:{size:9}}},y:{ticks:{color:'#64748b',font:{size:9}}}}}});
+hourChart=new Chart(document.getElementById('hourChart'),{type:'line',data:{labels:d.by_hour.map(x=>x.h+':00'),datasets:[{label:'Visits',data:d.by_hour.map(x=>x.c),borderColor:'#3b82f6',backgroundColor:'rgba(59,130,246,.2)',fill:true,tension:.4,pointRadius:2}]},options:{plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#64748b',font:{size:9}}},y:{ticks:{color:'#64748b',font:{size:9}}}}}});
 
-// Heatmap
 const hm=document.getElementById('heatmap');hm.innerHTML='';
-const days=['الأحد','الإثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت'];
+const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const today=new Date();const hmData={};
 d.heatmap.forEach(x=>{hmData[x.d+'|'+x.h]=+x.c});
 const allC=Object.values(hmData);const maxC=Math.max(...allC,1);
 for(let day=6;day>=0;day--){const dt=new Date(today);dt.setDate(dt.getDate()-day);const dStr=dt.toISOString().slice(0,10);
 const lbl=document.createElement('div');lbl.textContent=days[dt.getDay()];lbl.style.cssText='font-size:10px;color:#64748b;display:flex;align-items:center;justify-content:center';hm.appendChild(lbl);
 for(let h=0;h<24;h++){const c=hmData[dStr+'|'+String(h).padStart(2,'0')]||0;const int=c/maxC;
-const cell=document.createElement('div');cell.className='hm-cell';cell.title=`${dStr} ${h}:00 — ${c} زيارة`;
+const cell=document.createElement('div');cell.className='hm-cell';cell.title=`${dStr} ${h}:00 — ${c} visits`;
 cell.style.background=int===0?'#1e293b':`rgba(59,130,246,${0.15+int*0.85})`;hm.appendChild(cell)}}}
 
 document.addEventListener('DOMContentLoaded',()=>{loadStats();startSSE();setInterval(loadStats,30000)});
