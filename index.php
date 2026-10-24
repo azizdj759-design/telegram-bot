@@ -8,7 +8,7 @@
 define('APP_NAME', 'Tracker Pro');
 define('APP_TIMEZONE', 'Africa/Algiers');
 define('DB_PATH', __DIR__ . '/tracker.db');
-define('DASHBOARD_PASSWORD', 'change-this-password-now');
+define('DASHBOARD_PASSWORD', 'csj123');
 
 // ✏️ TELEGRAM BOT CONFIGURATION
 define('TELEGRAM_BOT_TOKEN', '8895436088:AAEP3Gynyzoh8VG5YQTnBZl4xH1vh4wMvo4'); // ⚠️ Revoke this!
