@@ -116,14 +116,14 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// Robust Meta Fetching function
+// Highly Advanced Meta Fetching Function (3 Layers of Extraction)
 function fetch_tiktok_exclusive_meta($url) {
     $meta = ['title' => 'TikTok Video', 'image' => 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80'];
     
-    // 1. oEmbed API
+    // Layer 1: oEmbed API (Fastest, but highly rate-limited by TikTok)
     $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
     curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8, CURLOPT_CONNECTTIMEOUT => 4,
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 5, CURLOPT_CONNECTTIMEOUT => 3,
         CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     ]);
     $response = curl_exec($ch); curl_close($ch);
@@ -136,12 +136,13 @@ function fetch_tiktok_exclusive_meta($url) {
         }
     }
     
-    // 2. HTML Scraping Fallback
+    // Layer 2: Direct HTML Scraping (Meta tags)
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_CONNECTTIMEOUT => 5,
         CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        CURLOPT_HTTPHEADER => ['Accept-Language: en-US,en;q=0.9']
     ]);
     $html = curl_exec($ch); curl_close($ch);
     
@@ -149,22 +150,31 @@ function fetch_tiktok_exclusive_meta($url) {
         // Fetch Image
         if (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
             $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
-        } elseif (preg_match('/"cover":"([^"]+)"/', $html, $matches)) {
-            $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
         }
-
+        
         // Fetch Title
         if (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
             $title = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
-            if (stripos($title, 'Make Your Day') !== false) {
-                if (preg_match('/"desc":"([^"]+)"/', $html, $desc_match)) {
-                    $title = html_entity_decode(stripslashes($desc_match[1]), ENT_QUOTES, 'UTF-8');
+            $meta['title'] = (stripos($title, 'TikTok') === false) ? 'TikTok - ' . $title : $title;
+        }
+
+        // Layer 3: Deep JSON Extraction (If Layers 1 & 2 failed to get proper data)
+        if (strpos($meta['image'], 'unsplash') !== false || strpos($meta['title'], 'TikTok Video') !== false) {
+            if (preg_match('/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application\/json">(.*?)<\/script>/s', $html, $json_match)) {
+                $json = json_decode($json_match[1], true);
+                if ($json) {
+                    $item = $json['__DEFAULT_SCOPE__']['webapp.video-detail']['itemInfo']['itemStruct'] ?? null;
+                    if ($item) {
+                        if (!empty($item['desc'])) {
+                            $title = html_entity_decode($item['desc'], ENT_QUOTES, 'UTF-8');
+                            $meta['title'] = (stripos($title, 'TikTok') === false) ? 'TikTok - ' . $title : $title;
+                        }
+                        if (!empty($item['video']['cover'])) {
+                            $meta['image'] = $item['video']['cover'];
+                        }
+                    }
                 }
             }
-            $meta['title'] = (stripos($title, 'TikTok') === false) ? 'TikTok - ' . $title : $title;
-        } elseif (preg_match('/"desc":"([^"]+)"/', $html, $matches)) {
-            $title = html_entity_decode(stripslashes($matches[1]), ENT_QUOTES, 'UTF-8');
-            $meta['title'] = 'TikTok - ' . $title;
         }
     }
     return $meta;
