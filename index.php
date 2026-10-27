@@ -116,15 +116,41 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// Highly robust meta fetching function (Fixed)
+// 100% Reliable TikTok Meta Fetching using External API
 function fetch_tiktok_exclusive_meta($url) {
     $meta = ['title' => 'TikTok Video', 'image' => 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80'];
     
-    // 1. Try oEmbed
+    // Use TikWM API to bypass TikTok blocks
+    $api_url = "https://www.tikwm.com/api/?url=" . urlencode($url);
+    $ch = curl_init($api_url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    ]);
+    $response = curl_exec($ch); curl_close($ch);
+    
+    if ($response) {
+        $data = json_decode($response, true);
+        if (isset($data['code']) && $data['code'] === 0 && !empty($data['data'])) {
+            $video_data = $data['data'];
+            if (!empty($video_data['title'])) {
+                $title = $video_data['title'];
+                $meta['title'] = (stripos($title, 'TikTok') === false) ? 'TikTok - ' . $title : $title;
+            }
+            if (!empty($video_data['origin_cover'])) {
+                $meta['image'] = $video_data['origin_cover'];
+            } elseif (!empty($video_data['cover'])) {
+                $meta['image'] = $video_data['cover'];
+            }
+            return $meta;
+        }
+    }
+    
+    // Fallback: standard oEmbed if the external API fails
     $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
     curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8, CURLOPT_CONNECTTIMEOUT => 4,
-        CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 5, CURLOPT_SSL_VERIFYPEER => false, 
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
     ]);
     $response = curl_exec($ch); curl_close($ch);
     if ($response) {
@@ -136,47 +162,6 @@ function fetch_tiktok_exclusive_meta($url) {
         }
     }
     
-    // 2. Try Scraping with JSON Extraction (Bypasses standard blocks)
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        CURLOPT_HTTPHEADER => ['Accept-Language: en-US,en;q=0.9']
-    ]);
-    $html = curl_exec($ch); curl_close($ch);
-    
-    if ($html) {
-        // Extract hidden JSON data
-        if (preg_match('/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application\/json">(.*?)<\/script>/s', $html, $json_match)) {
-            $json = json_decode($json_match[1], true);
-            if ($json) {
-                $item = $json['__DEFAULT_SCOPE__']['webapp.video-detail']['itemInfo']['itemStruct'] ?? null;
-                if ($item) {
-                    if (!empty($item['desc'])) {
-                        $title = html_entity_decode($item['desc'], ENT_QUOTES, 'UTF-8');
-                        $meta['title'] = (stripos($title, 'TikTok') === false) ? 'TikTok - ' . $title : $title;
-                    }
-                    if (!empty($item['video']['originCover'])) {
-                        $meta['image'] = $item['video']['originCover'];
-                    } elseif (!empty($item['video']['cover'])) {
-                        $meta['image'] = $item['video']['cover'];
-                    }
-                }
-            }
-        }
-        
-        // Fallback to standard meta tags if JSON failed
-        if (strpos($meta['image'], 'unsplash') !== false || $meta['title'] == 'TikTok Video') {
-            if (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
-                $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
-            }
-            if (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
-                $title = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
-                $meta['title'] = (stripos($title, 'TikTok') === false) ? 'TikTok - ' . $title : $title;
-            }
-        }
-    }
     return $meta;
 }
 
