@@ -12,7 +12,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# --- الخطوة الأهم: تثبيت متصفحات Playwright والاعتماديات الخاصة بها ---
+# --- تثبيت متصفح Playwright والاعتماديات الخاصة به ---
 RUN playwright install-deps chromium
 RUN playwright install chromium
 
