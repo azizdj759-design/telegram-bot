@@ -28,15 +28,12 @@ def lookup_leaks(username: str):
         return None
 
 def fetch_live_data_sync(username: str):
-    """جلب البيانات الحية مع استخدام خادم توقيعات بديل ومستقر"""
+    """جلب البيانات الحية باستخدام الإعدادات الافتراضية للمكتبة"""
     if not API_KEY:
         return {"error": "المفتاح غير موجود في إعدادات Render (TIKTOK_API_KEY)."}
     try:
-        # ✅ استخدام خادم Euler Stream بدلاً من الخادم الافتراضي البطيء
-        api = TikTokAPI(
-            api_key=API_KEY,
-            signing_server="https://tiktok.eulerstream.com"
-        )
+        # ✅ إزالة خادم Euler Stream والعودة إلى الإعدادات الافتراضية
+        api = TikTokAPI(api_key=API_KEY)
         
         user_info = api.user.info(username=username)
         
