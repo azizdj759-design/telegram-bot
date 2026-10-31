@@ -4,7 +4,7 @@ from fastapi.templating import Jinja2Templates
 from TikTokApi import TikTokApi
 import os
 import sqlite3
-import asyncio  # <-- أضفنا هذه المكتبة
+import asyncio
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -36,19 +36,31 @@ async def search(request: Request, username: str = Form(...)):
     live_data = None
     error_msg = None
 
-    # دالة داخلية لجلب البيانات
     async def fetch_tiktok_data():
         async with TikTokApi() as api:
-            kwargs = {"ms_tokens": [MS_TOKEN], "num_sessions": 1, "sleep_after": 3}
+            # ✅ إضافة وسائط لتقليل استهلاك الذاكرة (مهم جداً لـ Render)
+            kwargs = {
+                "ms_tokens": [MS_TOKEN], 
+                "num_sessions": 1, 
+                "sleep_after": 3,
+                "browser_args": [
+                    "--disable-gpu",
+                    "--disable-images",
+                    "--disable-dev-shm-usage",
+                    "--no-sandbox",
+                    "--single-process"
+                ]
+            }
             if PROXY_URL:
                 kwargs["proxies"] = [PROXY_URL]
+                
             await api.create_sessions(**kwargs)
             user = api.user(username=username)
             return await user.info()
 
     try:
-        # إجبار الكود على التوقف بعد 25 ثانية كحد أقصى
-        user_data = await asyncio.wait_for(fetch_tiktok_data(), timeout=25.0)
+        # زيادة وقت المهلة قليلاً ليتناسب مع بطء الخطة المجانية
+        user_data = await asyncio.wait_for(fetch_tiktok_data(), timeout=40.0)
         
         user_info = user_data.get("userInfo", {}).get("user", {})
         user_stats = user_data.get("userInfo", {}).get("stats", {})
@@ -67,7 +79,7 @@ async def search(request: Request, username: str = Form(...)):
             "Link": user_info.get("bioLink", {}).get("link", "(None)") if user_info.get("bioLink") else "(None)"
         }
     except asyncio.TimeoutError:
-        error_msg = "انتهى وقت الانتظار: تيك توك لم يستجب. (قد يكون الـ IP محظوراً أو المتصفح يستهلك ذاكرة كبيرة)."
+        error_msg = "انتهى وقت الانتظار: تيك توك لم يستجب. قد يكون الـ IP محظوراً أو المتصفح يستهلك ذاكرة كبيرة."
     except Exception as e:
         error_msg = f"فشل الاتصال بتيك توك: {str(e)}"
 
@@ -81,4 +93,6 @@ async def search(request: Request, username: str = Form(...)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Render يمرر المنفذ عبر متغير البيئة PORT
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
