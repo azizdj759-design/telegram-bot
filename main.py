@@ -37,30 +37,26 @@ async def search(request: Request, username: str = Form(...)):
     error_msg = None
 
     async def fetch_tiktok_data():
-        async with TikTokApi() as api:
-            # ✅ إضافة وسائط لتقليل استهلاك الذاكرة (مهم جداً لـ Render)
-            kwargs = {
-                "ms_tokens": [MS_TOKEN], 
-                "num_sessions": 1, 
-                "sleep_after": 3,
-                "browser_args": [
-                    "--disable-gpu",
-                    "--disable-images",
-                    "--disable-dev-shm-usage",
-                    "--no-sandbox",
-                    "--single-process"
-                ]
-            }
-            if PROXY_URL:
-                kwargs["proxies"] = [PROXY_URL]
-                
-            await api.create_sessions(**kwargs)
-            user = api.user(username=username)
-            return await user.info()
+        # ✅ التهيئة الصحيحة: إنشاء نسخة من API ثم استدعاء create_sessions
+        api = TikTokApi()
+        await api.create_sessions(
+            ms_tokens=[MS_TOKEN], 
+            num_sessions=1, 
+            sleep_after=3,
+            browser='chromium',  # تحديد المتصفح بشكل صريح
+            override_browser_args=["--no-sandbox", "--disable-dev-shm-usage"] # لتقليل استهلاك الذاكرة
+        )
+        
+        # جلب بيانات المستخدم
+        user = api.user(username=username)
+        user_data = await user.info()
+        
+        # إغلاق الجلسة لتحرير الموارد
+        await api.close_sessions() 
+        return user_data
 
     try:
-        # زيادة وقت المهلة قليلاً ليتناسب مع بطء الخطة المجانية
-        user_data = await asyncio.wait_for(fetch_tiktok_data(), timeout=40.0)
+        user_data = await asyncio.wait_for(fetch_tiktok_data(), timeout=45.0)
         
         user_info = user_data.get("userInfo", {}).get("user", {})
         user_stats = user_data.get("userInfo", {}).get("stats", {})
@@ -93,6 +89,5 @@ async def search(request: Request, username: str = Form(...)):
 
 if __name__ == "__main__":
     import uvicorn
-    # Render يمرر المنفذ عبر متغير البيئة PORT
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
