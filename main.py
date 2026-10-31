@@ -1,15 +1,16 @@
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from TikTokApi import TikTokApi
+from curl_cffi import requests as curl_requests
 import os
 import sqlite3
 import asyncio
+import json
+import re
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-MS_TOKEN = os.getenv("MS_TOKEN", "ضع_الكوكي_هنا")
 PROXY_URL = os.getenv("PROXY_URL", None)
 
 def lookup_leaks(username: str):
@@ -36,48 +37,71 @@ async def search(request: Request, username: str = Form(...)):
     live_data = None
     error_msg = None
 
-    async def fetch_tiktok_data():
-        # ✅ التهيئة الصحيحة: إنشاء نسخة من API ثم استدعاء create_sessions
-        api = TikTokApi()
-        await api.create_sessions(
-            ms_tokens=[MS_TOKEN], 
-            num_sessions=1, 
-            sleep_after=3,
-            browser='chromium',  # تحديد المتصفح بشكل صريح
-            override_browser_args=["--no-sandbox", "--disable-dev-shm-usage"] # لتقليل استهلاك الذاكرة
-        )
+    def fetch_tiktok_data():
+        url = f"https://www.tiktok.com/@{username}"
+        proxies = {"http": PROXY_URL, "https": PROXY_URL} if PROXY_URL else None
         
-        # جلب بيانات المستخدم
-        user = api.user(username=username)
-        user_data = await user.info()
-        
-        # إغلاق الجلسة لتحرير الموارد
-        await api.close_sessions() 
-        return user_data
+        try:
+            # استخدام curl_cffi لمحاكاة متصفح Chrome 110
+            response = curl_requests.get(
+                url,
+                impersonate="chrome110",
+                proxies=proxies,
+                timeout=15,
+                allow_redirects=True
+            )
+            
+            # إذا تم حظر الطلب أو لم يتم العثور على الحساب
+            if response.status_code != 200:
+                return {"error": f"فشل الطلب، كود الحالة: {response.status_code}"}
+            
+            html = response.text
+            
+            # استخراج JSON المخفي في الصفحة
+            match = re.search(r'<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">(.*?)</script>', html)
+            if match:
+                json_data = json.loads(match.group(1))
+                scope = json_data.get("__DEFAULT_SCOPE__", {})
+                user_info = scope.get("webapp.user-detail", {}).get("userInfo", {})
+                
+                if user_info:
+                    return user_info
+                else:
+                    return {"error": "لم يتم العثور على بيانات لهذا الحساب."}
+            else:
+                return {"error": "تم حظر الطلب من قبل تيك توك (CAPTCHA) أو لم يتم العثور على البيانات."}
+                
+        except Exception as e:
+            return {"error": f"خطأ في الاتصال: {str(e)}"}
 
     try:
-        user_data = await asyncio.wait_for(fetch_tiktok_data(), timeout=45.0)
+        # تشغيل الطلب في مسار منفصل لتجنب تجميد السيرفر
+        user_data = await asyncio.wait_for(asyncio.to_thread(fetch_tiktok_data), timeout=20.0)
         
-        user_info = user_data.get("userInfo", {}).get("user", {})
-        user_stats = user_data.get("userInfo", {}).get("stats", {})
-        
-        live_data = {
-            "Username": user_info.get("uniqueId", "N/A"),
-            "Name": user_info.get("nickname", "N/A"),
-            "Region": user_info.get("region", "N/A"),
-            "Private": "Yes ✅" if user_info.get("privateAccount") else "No ❌",
-            "Verified": "Yes ✅" if user_info.get("verified") else "No ❌",
-            "Followers": f"{user_stats.get('followerCount', 0):,}",
-            "Following": f"{user_stats.get('followingCount', 0):,}",
-            "Likes": f"{user_stats.get('heartCount', 0):,}",
-            "Video Count": f"{user_stats.get('videoCount', 0):,}",
-            "Bio": user_info.get("signature", "(None)"),
-            "Link": user_info.get("bioLink", {}).get("link", "(None)") if user_info.get("bioLink") else "(None)"
-        }
+        if "error" in user_data:
+            error_msg = user_data["error"]
+        else:
+            user = user_data.get("user", {})
+            stats = user_data.get("stats", {})
+            
+            live_data = {
+                "Username": user.get("uniqueId", "N/A"),
+                "Name": user.get("nickname", "N/A"),
+                "Region": user.get("region", "N/A"),
+                "Private": "Yes ✅" if user.get("privateAccount") else "No ❌",
+                "Verified": "Yes ✅" if user.get("verified") else "No ❌",
+                "Followers": f"{stats.get('followerCount', 0):,}",
+                "Following": f"{stats.get('followingCount', 0):,}",
+                "Likes": f"{stats.get('heartCount', 0):,}",
+                "Video Count": f"{stats.get('videoCount', 0):,}",
+                "Bio": user.get("signature", "(None)"),
+                "Link": user.get("bioLink", {}).get("link", "(None)") if user.get("bioLink") else "(None)"
+            }
+            
     except asyncio.TimeoutError:
-        error_msg = "انتهى وقت الانتظار: تيك توك لم يستجب. قد يكون الـ IP محظوراً أو المتصفح يستهلك ذاكرة كبيرة."
+        error_msg = "انتهى وقت الانتظار: الخادم لم يستجب في الوقت المحدد."
     except Exception as e:
-        error_msg = f"فشل الاتصال بتيك توك: {str(e)}"
+        error_msg = f"خطأ غير متوقع: {str(e)}"
 
     final_result = {
         "live_stats": live_data,
