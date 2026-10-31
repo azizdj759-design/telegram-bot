@@ -12,7 +12,6 @@ templates = Jinja2Templates(directory="templates")
 API_KEY = os.getenv("TIKTOK_API_KEY", "")
 
 def lookup_leaks(username: str):
-    """البحث في قاعدة البيانات المسربة"""
     try:
         if not os.path.exists('leaks.db'):
             return None
@@ -21,26 +20,29 @@ def lookup_leaks(username: str):
         cursor.execute("SELECT email, phone FROM leaks WHERE LOWER(username) = ?", (username.lower(),))
         result = cursor.fetchone()
         conn.close()
-        if result:
-            return {"email": result[0], "phone": result[1]}
-        return None
-    except Exception as e:
-        print(f"DB Error: {e}")
+        return {"email": result[0], "phone": result[1]} if result else None
+    except Exception:
         return None
 
 def fetch_live_data_sync(username: str):
-    """جلب البيانات الحية من الـ Private API باستخدام اسم المستخدم مباشرة"""
     if not API_KEY:
         return {"error": "API Key is missing. Please add TIKTOK_API_KEY to Environment Variables."}
     try:
         api = TikTokAPI(api_key=API_KEY)
         
-        # ✅ الطريقة الصحيحة: تمرير username مباشرة إلى دالة info
-        # المكتبة تتولى تحويله إلى sec_uid داخلياً
-        user_info = api.user.info(username=username)
+        # الخطوة 1: تحويل اسم المستخدم إلى sec_uid
+        user_resolve = api.user.resolve_username(username)
+        
+        if not user_resolve or not user_resolve.get("user_list"):
+            return {"error": f"لم يتم العثور على مستخدم بهذا الاسم: {username}"}
+            
+        sec_uid = user_resolve["user_list"][0]["user"]["sec_uid"]
+        
+        # الخطوة 2: جلب البيانات الكاملة باستخدام sec_uid
+        user_info = api.user.info(sec_uid)
         
         if not user_info or "user" not in user_info:
-            return None
+            return {"error": "فشل جلب بيانات الملف الشخصي."}
             
         user = user_info["user"]
         stats = user_info.get("stats", {})
@@ -57,11 +59,10 @@ def fetch_live_data_sync(username: str):
             "Video Count": f"{stats.get('video_count', 0):,}",
             "Bio": user.get("signature", "(None)"),
             "Link": user.get("bio_link", {}).get("link", "(None)") if user.get("bio_link") else "(None)",
-            "Email (API)": user.get("email", "(None)")
         }
     except Exception as e:
-        print(f"API Error: {e}")
-        return {"error": f"حدث خطأ أثناء الاتصال بالـ API: {str(e)}"}
+        # إرجاع الخطأ الفعلي لعرضه في الواجهة
+        return {"error": f"خطأ في API: {str(e)}"}
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -78,10 +79,7 @@ async def search(request: Request, username: str = Form(...)):
         error_msg = live_data["error"]
         live_data = None
 
-    final_result = {
-        "leaked_info": leaked_data,
-        "live_stats": live_data,
-    }
+    final_result = {"leaked_info": leaked_data, "live_stats": live_data}
     return templates.TemplateResponse("index.html", {"request": request, "result": final_result, "error": error_msg, "username": username})
 
 if __name__ == "__main__":
