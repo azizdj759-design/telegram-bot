@@ -9,17 +9,13 @@ from tiktokflow import TikTokAPI
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# --- 1. الحصول على مفتاح API مجاني ---
-# اذهب إلى بوت تيليجرام: @tiktok_private_api_bot
-# أرسل الأمر /key وانسخ المفتاح الذي سيظهر لك
-API_KEY = os.getenv("TIKTOK_API_KEY", "ضع_المفتاح_هنا")
+# سيتم قراءة المفتاح من إعدادات Render
+API_KEY = os.getenv("TIKTOK_API_KEY", "ضع_المفتاح_هنا_للتجربة_المحلية")
 
-# --- 2. دالة البحث في قاعدة البيانات المسربة ---
 def lookup_leaks(username: str):
     try:
         conn = sqlite3.connect('leaks.db')
         cursor = conn.cursor()
-        # البحث عن اسم المستخدم (بدون حساسية لحالة الأحرف)
         cursor.execute("SELECT email, phone FROM leaks WHERE LOWER(username) = ?", (username.lower(),))
         result = cursor.fetchone()
         conn.close()
@@ -27,13 +23,10 @@ def lookup_leaks(username: str):
     except Exception:
         return None
 
-# --- 3. دالة جلب البيانات الحية عبر Private API ---
 async def fetch_live_data(username: str):
     try:
-        # تهيئة الاتصال باستخدام المفتاح
+        # استخدام المفتاح الخاص بك
         api = TikTokAPI(api_key=API_KEY)
-        
-        # جلب بيانات المستخدم
         user_info = api.user.info(username=username)
         
         if not user_info or "user" not in user_info:
@@ -53,10 +46,12 @@ async def fetch_live_data(username: str):
             "Likes": f"{stats.get('heart_count', 0):,}",
             "Video Count": f"{stats.get('video_count', 0):,}",
             "Bio": user.get("signature", "(None)"),
-            "Link": user.get("bio_link", {}).get("link", "(None)") if user.get("bio_link") else "(None)"
+            "Link": user.get("bio_link", {}).get("link", "(None)") if user.get("bio_link") else "(None)",
+            # بعض استجابات الـ Private API ترجع الإيميل إذا كان متاحاً
+            "Email (Private API)": user.get("email", "(None)") 
         }
     except Exception as e:
-        print(f"Error fetching live data: {e}")
+        print(f"API Error: {e}")
         return None
 
 @app.get("/", response_class=HTMLResponse)
@@ -67,10 +62,7 @@ async def home(request: Request):
 async def search(request: Request, username: str = Form(...)):
     username = username.strip().lstrip('@')
     
-    # 1. البحث في التسريبات أولاً
     leaked_data = lookup_leaks(username)
-    
-    # 2. جلب البيانات الحية (إذا لم تكن في التسريبات أو حتى لو كانت، لجلب الإحصائيات المحدثة)
     live_data = await fetch_live_data(username)
     
     final_result = {
