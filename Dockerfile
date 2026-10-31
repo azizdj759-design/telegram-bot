@@ -1,20 +1,11 @@
-FROM python:3.10-slim
-
-# تثبيت الاعتماديات الأساسية للنظام
-RUN apt-get update && apt-get install -y \
-    gcc \
-    libcurl4-openssl-dev \
-    && rm -rf /var/lib/apt/lists/*
+# استخدام الصورة الرسمية من Playwright التي تحتوي على المتصفحات والاعتماديات
+FROM mcr.microsoft.com/playwright/python:v1.40.0-focal
 
 WORKDIR /app
 
 # نسخ المتطلبات وتثبيتها
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# --- تثبيت متصفح Playwright والاعتماديات الخاصة به ---
-RUN playwright install-deps chromium
-RUN playwright install chromium
 
 # نسخ باقي الملفات
 COPY . .
