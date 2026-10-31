@@ -3,34 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TikTok Hybrid Intelligence</title>
+    <title>Private API & Leaks OSINT</title>
     <style>
         :root { --bg: #0f0f0f; --card: #1a1a1a; --text: #e0e0e0; --accent: #00f2fe; --danger: #ff4757; --success: #2ed573; }
-        body { background-color: var(--bg); color: var(--text); font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; justify-content: center; padding: 20px; margin: 0; }
+        body { background-color: var(--bg); color: var(--text); font-family: 'Segoe UI', Tahoma, sans-serif; display: flex; justify-content: center; padding: 20px; margin: 0; }
         .container { background: var(--card); padding: 30px; border-radius: 12px; width: 100%; max-width: 650px; box-shadow: 0 10px 30px rgba(0,0,0,0.7); border: 1px solid #333; }
-        h2 { text-align: center; color: var(--accent); margin-bottom: 25px; text-transform: uppercase; letter-spacing: 2px; font-weight: 300; }
+        h2 { text-align: center; color: var(--accent); margin-bottom: 25px; text-transform: uppercase; }
         .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
         input[type="text"] { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #444; background: #222; color: white; font-size: 16px; outline: none; }
-        input[type="text"]:focus { border-color: var(--accent); }
-        button { padding: 12px 25px; background: var(--accent); color: #000; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 16px; transition: 0.3s; }
-        button:hover { background: #00d2de; }
+        button { padding: 12px 25px; background: var(--accent); color: #000; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
         
-        .section-title { margin-top: 25px; margin-bottom: 10px; color: var(--accent); font-size: 14px; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #333; padding-bottom: 5px; }
+        .leaked-box { background: #2a1515; border: 1px solid var(--danger); border-radius: 8px; padding: 15px; margin-bottom: 20px; }
+        .leaked-box h3 { margin: 0 0 10px 0; color: var(--danger); font-size: 16px; text-align: center; }
         .result-item { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #2a2a2a; font-size: 14px; }
         .key { color: #888; }
-        .value { font-weight: bold; text-align: right; color: #fff; }
+        .value { font-weight: bold; color: #fff; }
+        .leaked-box .value { color: var(--danger); }
         
-        .leaked-box { background: #2a1515; border: 1px solid var(--danger); border-radius: 8px; padding: 15px; margin-top: 20px; }
-        .leaked-box .key { color: #ff8888; }
-        .leaked-box .value { color: var(--danger); font-size: 16px; }
-        
-        .error { background: #4a1c1c; color: #ff6b6b; padding: 15px; border-radius: 8px; margin-top: 20px; text-align: center; }
-        .bio-box { background: #111; padding: 10px; border-radius: 5px; margin-top: 5px; font-style: italic; color: #aaa; border: 1px dashed #444; }
+        .live-box { background: #111; border-radius: 8px; padding: 15px; border: 1px solid #333; }
+        .live-box h3 { margin: 0 0 10px 0; color: var(--accent); font-size: 16px; text-align: center; }
+        .bio-box { background: #222; padding: 10px; border-radius: 5px; margin-top: 5px; color: #aaa; border: 1px dashed #444; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h2>Hybrid OSINT Engine</h2>
+        <h2>PRIVATE API ENGINE</h2>
         <form method="POST">
             <div class="input-group">
                 <input type="text" name="username" placeholder="Enter Username..." value="{{ username }}" required>
@@ -38,15 +35,11 @@
             </div>
         </form>
 
-        {% if error %}
-            <div class="error">{{ error }}</div>
-        {% endif %}
-
         {% if result %}
-            <!-- قسم التسريبات (يظهر فقط إذا وجد شيئاً) -->
+            <!-- قسم التسريبات -->
             {% if result.leaked_info %}
                 <div class="leaked-box">
-                    <div style="text-align: center; font-weight: bold; margin-bottom: 10px; color: var(--danger);">⚠️ LEAKED DATABASE MATCH</div>
+                    <h3>⚠️ LEAKED DATABASE MATCH</h3>
                     <div class="result-item">
                         <span class="key">Email:</span>
                         <span class="value">{{ result.leaked_info.email }}</span>
@@ -57,25 +50,34 @@
                     </div>
                 </div>
             {% else %}
-                <div style="text-align: center; color: #888; margin-top: 20px; font-size: 13px;">No leaked records found for this username.</div>
+                <div style="text-align: center; color: #888; margin-bottom: 20px;">No leaked records found in local DB.</div>
             {% endif %}
 
             <!-- قسم البيانات الحية -->
             {% if result.live_stats %}
-                <div class="section-title">Live TikTok Data</div>
-                {% for key, value in result.live_stats.items() %}
-                    {% if key == 'Bio' %}
-                        <div class="result-item" style="flex-direction: column; align-items: flex-start;">
-                            <span class="key">Bio:</span>
-                            <div class="bio-box">{{ value }}</div>
-                        </div>
-                    {% else %}
-                        <div class="result-item">
-                            <span class="key">{{ key }}:</span>
-                            <span class="value">{{ value }}</span>
-                        </div>
-                    {% endif %}
-                {% endfor %}
+                <div class="live-box">
+                    <h3>LIVE PRIVATE API DATA</h3>
+                    {% for key, value in result.live_stats.items() %}
+                        {% if key == 'Bio' %}
+                            <div class="result-item" style="flex-direction: column; align-items: flex-start;">
+                                <span class="key">Bio:</span>
+                                <div class="bio-box">{{ value }}</div>
+                            </div>
+                        {% elif key == 'Email (Private API)' and value != '(None)' %}
+                            <div class="result-item" style="color: var(--success);">
+                                <span class="key" style="color: var(--success);">Email (API):</span>
+                                <span class="value" style="color: var(--success);">{{ value }}</span>
+                            </div>
+                        {% else %}
+                            <div class="result-item">
+                                <span class="key">{{ key }}:</span>
+                                <span class="value">{{ value }}</span>
+                            </div>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div style="text-align: center; color: var(--danger); margin-top: 20px;">Failed to fetch live data. Check API Key or Username.</div>
             {% endif %}
         {% endif %}
     </div>
