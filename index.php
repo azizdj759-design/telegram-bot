@@ -1,103 +1,154 @@
 <?php
-// ==========================================
-// 1. طبقة الحماية بكلمة مرور (Basic Auth)
-// ==========================================
-$valid_username = 'admin'; // يمكنك تغيير اسم المستخدم
-$valid_password = 'SuperSecretPassword123!'; // غير كلمة المرور
+// إعدادات الرأس لمنع أي أخطاء في الترميز
+header('Content-Type: text/html; charset=utf-8');
 
-if (!isset($_SERVER['PHP_AUTH_USER']) || 
-    ($_SERVER['PHP_AUTH_USER'] != $valid_username) || 
-    ($_SERVER['PHP_AUTH_PW'] != $valid_password)) {
-    
-    header('WWW-Authenticate: Basic realm="Restricted Area"');
-    header('HTTP/1.0 401 Unauthorized');
-    echo 'يجب إدخال كلمة المرور للوصول إلى هذه الأداة.';
-    exit;
-}
-
-// ==========================================
-// 2. منطق جلب البيانات (Backend Logic)
-// ==========================================
 $result = null;
 $error = null;
+$username = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($_POST['username'])) {
     $username = trim($_POST['username']);
+    // إزالة علامة @ إذا كتبها المستخدم
+    $username = ltrim($username, '@');
     
-    // ملاحظة: هذا مجرد مثال لكيفية استخدام cURL.
-    // يجب عليك استبدال الرابط برابط الـ API الحقيقي أو منطق الكشط الخاص بك.
-    $api_url = "https://api.example.com/tiktok/info?username=" . urlencode($username);
+    // رابط الحساب
+    $url = "https://www.tiktok.com/@" . urlencode($username);
     
     $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $api_url);
+    curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10); // مهلة 10 ثواني
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
     
-    // مهم جداً: تمويه الطلب كأنه قادم من متصفح حقيقي (لتجنب الحظر)
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    // محاكاة متصفح حقيقي (مهم جداً لتجنب الحظر)
+    $headers = [
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language: en-US,en;q=0.5',
+        'Connection: keep-alive',
+        'Upgrade-Insecure-Requests: 1'
+    ];
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     
-    // إذا كنت تستخدم بروكسي، قم بتفعيل هذين السطرين:
-    // curl_setopt($ch, CURLOPT_PROXY, 'http://your-proxy-ip:port');
-    // curl_setopt($ch, CURLOPT_PROXYUSERPWD, 'user:pass');
-
-    $response = curl_exec($ch);
+    // إعدادات البروكسي (إذا كنت ستستخدمه على Render، يجب تفعيله لتجنب حظر IP)
+    // curl_setopt($ch, CURLOPT_PROXY, 'http://YOUR_PROXY_IP:PORT');
+    
+    $html = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    if ($response === false) {
-        $error = "فشل الاتصال بالخادم.";
-    } else {
-        // هنا تقوم بفك تشفير JSON وتحليل البيانات
-        $data = json_decode($response, true);
-        if ($http_code == 200 && $data) {
-            $result = $data; 
+    if ($http_code == 200 && $html) {
+        // استخراج كائن JSON المخفي في الصفحة
+        if (preg_match('/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application\/json">(.*?)<\/script>/s', $html, $matches)) {
+            $json_data = json_decode($matches[1], true);
+            
+            // التحقق من وجود بيانات المستخدم
+            if (isset($json_data['__DEFAULT_SCOPE__']['webapp.user-detail']['userInfo'])) {
+                $userInfo = $json_data['__DEFAULT_SCOPE__']['webapp.user-detail']['userInfo'];
+                $user = $userInfo['user'];
+                $stats = $userInfo['stats'];
+                
+                // تجميع البيانات لتشبه مخرجات البوت في الصورة
+                $result = [
+                    'Username' => $user['uniqueId'] ?? 'N/A',
+                    'Name' => $user['nickname'] ?? 'N/A',
+                    'Region' => $user['region'] ?? 'N/A', // الدولة
+                    'Private Account' => ($user['privateAccount'] ?? false) ? 'Yes ✅' : 'No ❌',
+                    'Verified' => ($user['verified'] ?? false) ? 'Yes ✅' : 'No ❌',
+                    'Followers' => number_format($stats['followerCount'] ?? 0),
+                    'Following' => number_format($stats['followingCount'] ?? 0),
+                    'Likes' => number_format($stats['heartCount'] ?? 0),
+                    'Video Count' => number_format($stats['videoCount'] ?? 0),
+                    'Bio' => $user['signature'] ?? '(None)',
+                    'Link in Bio' => $user['bioLink']['link'] ?? '(None)',
+                    // استخراج إعدادات التعليقات (إن وجدت في الـ JSON)
+                    'Comment Settings' => $stats['commentSetting'] ?? 'N/A', 
+                    // استخراج التاريخ (إذا توفر)
+                    'Account Created' => isset($user['createTime']) ? date('Y-m-d', $user['createTime']) : 'N/A'
+                ];
+            } else {
+                $error = "لم يتم العثور على بيانات لهذا الحساب. تأكد من اسم المستخدم.";
+            }
         } else {
-            $error = "لم يتم العثور على بيانات أو تم حظر الطلب (كود: $http_code).";
+            $error = "تم حظر الطلب من قبل تيك توك (CAPTCHA). يرجى المحاولة لاحقاً أو استخدام بروكسي.";
         }
+    } else {
+        $error = "فشل في الاتصال بتيك توك. كود الخطأ: " . $http_code;
     }
 }
 ?>
 
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="en" dir="ltr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TikTok OSINT Tool</title>
+    <title>TikTok Advanced Info - Superior Bot</title>
     <style>
-        /* تصميم بسيط يشبه البوت في الصورة */
-        body { background-color: #121212; color: #e0e0e0; font-family: sans-serif; display: flex; justify-content: center; padding-top: 50px; }
-        .container { background: #1e1e1e; padding: 20px; border-radius: 10px; width: 100%; max-width: 500px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-        input[type="text"] { width: 100%; padding: 10px; margin-bottom: 10px; border-radius: 5px; border: 1px solid #333; background: #2c2c2c; color: white; box-sizing: border-box; }
-        button { width: 100%; padding: 10px; background: #00f2fe; color: #000; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; }
-        button:hover { background: #00d2de; }
-        .result-box { margin-top: 20px; background: #2c2c2c; padding: 15px; border-radius: 5px; border-right: 4px solid #00f2fe; word-wrap: break-word; }
-        .error { color: #ff4c4c; margin-top: 10px; }
-        pre { white-space: pre-wrap; font-size: 14px; }
+        :root { --bg: #121212; --card: #1e1e1e; --text: #e0e0e0; --accent: #00f2fe; }
+        body { background-color: var(--bg); color: var(--text); font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; justify-content: center; padding: 20px; }
+        .container { background: var(--card); padding: 30px; border-radius: 12px; width: 100%; max-width: 600px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h2 { text-align: center; color: var(--accent); margin-bottom: 25px; text-transform: uppercase; letter-spacing: 1px; }
+        .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
+        input[type="text"] { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #333; background: #2c2c2c; color: white; font-size: 16px; outline: none; transition: 0.3s; }
+        input[type="text"]:focus { border-color: var(--accent); }
+        button { padding: 12px 25px; background: var(--accent); color: #000; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 16px; transition: 0.3s; }
+        button:hover { background: #00d2de; transform: translateY(-2px); }
+        
+        /* تصميم بطاقة النتائج لتشبه البوت */
+        .result-card { background: #252525; border-radius: 10px; padding: 20px; margin-top: 20px; border-left: 5px solid var(--accent); }
+        .result-item { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #333; font-size: 15px; align-items: center; }
+        .result-item:last-child { border-bottom: none; }
+        .key { color: #aaa; font-weight: 500; }
+        .value { font-weight: bold; text-align: right; word-break: break-word; max-width: 60%; }
+        .bio-box { background: #1a1a1a; padding: 10px; border-radius: 5px; margin-top: 10px; font-style: italic; color: #ccc; border: 1px dashed #444; }
+        .error { background: #4a1c1c; color: #ff6b6b; padding: 15px; border-radius: 8px; text-align: center; margin-top: 20px; border-left: 5px solid #ff6b6b; }
+        .loading { display: none; text-align: center; margin-top: 20px; color: var(--accent); }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2 style="text-align: center;">TikTok Info Fetcher</h2>
+    <h2>TikTok Info Analyzer</h2>
     
-    <form method="POST">
-        <input type="text" name="username" placeholder="أدخل اسم المستخدم (بدون @)" required>
-        <button type="submit">بحث</button>
+    <form method="POST" id="searchForm">
+        <div class="input-group">
+            <input type="text" name="username" placeholder="Enter TikTok Username..." value="<?= htmlspecialchars($username) ?>" required>
+            <button type="submit" onclick="document.querySelector('.loading').style.display='block';">Analyze</button>
+        </div>
     </form>
+
+    <div class="loading" id="loading">Fetching data from TikTok Servers...</div>
 
     <?php if ($error): ?>
         <div class="error"><?= htmlspecialchars($error) ?></div>
     <?php endif; ?>
 
     <?php if ($result): ?>
-        <div class="result-box">
-            <h3>النتائج:</h3>
-            <!-- هنا يمكنك تنسيق البيانات كما تشاء بدلاً من طباعة الـ JSON الخام -->
-            <pre><?= htmlspecialchars(print_r($result, true)) ?></pre>
+        <div class="result-card">
+            <?php foreach ($result as $key => $value): ?>
+                <?php if ($key == 'Bio'): ?>
+                    <div class="result-item" style="flex-direction: column; align-items: flex-start;">
+                        <span class="key">Bio:</span>
+                        <div class="bio-box"><?= htmlspecialchars($value) ?></div>
+                    </div>
+                <?php else: ?>
+                    <div class="result-item">
+                        <span class="key"><?= htmlspecialchars($key) ?>:</span>
+                        <span class="value"><?= htmlspecialchars($value) ?></span>
+                    </div>
+                <?php endif; ?>
+            <?php endforeach; ?>
         </div>
     <?php endif; ?>
 </div>
+
+<script>
+    // إخفاء رسالة التحميل عند اكتمال تحميل الصفحة
+    window.onload = function() {
+        document.getElementById('loading').style.display = 'none';
+    };
+</script>
 
 </body>
 </html>
