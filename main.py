@@ -10,9 +10,11 @@ from tiktokflow import TikTokAPI
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
+# قراءة المفتاح من إعدادات Render
 API_KEY = os.getenv("TIKTOK_API_KEY", "")
 
 def lookup_leaks(username: str):
+    """البحث في قاعدة البيانات المسربة"""
     try:
         if not os.path.exists('leaks.db'):
             return None
@@ -26,22 +28,21 @@ def lookup_leaks(username: str):
         return None
 
 def fetch_live_data_sync(username: str):
+    """جلب البيانات الحية مع استخدام خادم توقيعات بديل ومستقر"""
     if not API_KEY:
         return {"error": "المفتاح غير موجود في إعدادات Render (TIKTOK_API_KEY)."}
     try:
-        print(f"--- محاولة الاتصال بالـ API للمستخدم: {username} ---")
-        api = TikTokAPI(api_key=API_KEY)
+        # ✅ استخدام خادم Euler Stream بدلاً من الخادم الافتراضي البطيء
+        api = TikTokAPI(
+            api_key=API_KEY,
+            signing_server="https://tiktok.eulerstream.com"
+        )
         
-        # محاولة جلب البيانات مباشرة
         user_info = api.user.info(username=username)
         
-        if not user_info:
-            return {"error": "الـ API لم يرجع أي بيانات (User not found or blocked)."}
+        if not user_info or "user" not in user_info:
+            return {"error": "لم يتم العثور على بيانات لهذا المستخدم."}
             
-        # إذا رجع الـ API بيانات لكن بدون كلمة user
-        if "user" not in user_info:
-             return {"error": f"استجابة غير متوقعة من الـ API: {str(user_info)}"}
-
         user = user_info["user"]
         stats = user_info.get("stats", {})
         
@@ -57,13 +58,12 @@ def fetch_live_data_sync(username: str):
             "Video Count": f"{stats.get('video_count', 0):,}",
             "Bio": user.get("signature", "(None)"),
             "Link": user.get("bio_link", {}).get("link", "(None)") if user.get("bio_link") else "(None)",
+            "Email (API)": user.get("email", "(None)")
         }
     except Exception as e:
-        # طباعة الخطأ في سجلات Render لمعرفة السبب
         print("=== خطأ حقيقي في الـ API ===")
         traceback.print_exc()
         print("=============================")
-        # إرجاع الخطأ الحقيقي لعرضه في الموقع
         return {"error": f"API Error: {str(e)}"}
 
 @app.get("/", response_class=HTMLResponse)
@@ -73,9 +73,8 @@ async def home(request: Request):
 @app.post("/", response_class=HTMLResponse)
 async def search(request: Request, username: str = Form(...)):
     username = username.strip().lstrip('@')
-    leaked_data = lookup_leaks(username)
     
-    # تنفيذ الاتصال في الخلفية
+    leaked_data = lookup_leaks(username)
     live_data = await asyncio.to_thread(fetch_live_data_sync, username)
     
     error_msg = None
@@ -83,7 +82,10 @@ async def search(request: Request, username: str = Form(...)):
         error_msg = live_data["error"]
         live_data = None
 
-    final_result = {"leaked_info": leaked_data, "live_stats": live_data}
+    final_result = {
+        "leaked_info": leaked_data,
+        "live_stats": live_data,
+    }
     return templates.TemplateResponse("index.html", {"request": request, "result": final_result, "error": error_msg, "username": username})
 
 if __name__ == "__main__":
