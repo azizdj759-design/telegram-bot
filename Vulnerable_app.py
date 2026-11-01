@@ -1,15 +1,14 @@
-from flask import Flask, request
+import os
 import sqlite3
+from flask import Flask, request
 
 app = Flask(__name__)
 
-# تهيئة قاعدة البيانات الوهمية
 def init_db():
     conn = sqlite3.connect('vuln.db')
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, password TEXT, role TEXT)''')
     cursor.execute("INSERT OR IGNORE INTO users VALUES (1, 'admin', 'SuperSecretPassword123!', 'Administrator')")
-    cursor.execute("INSERT OR IGNORE INTO users VALUES (2, 'user', 'password123', 'User')")
     conn.commit()
     conn.close()
 
@@ -22,15 +21,14 @@ def login():
     
     conn = sqlite3.connect('vuln.db')
     cursor = conn.cursor()
-    
-    # 🚨 الثغرة هنا: دمج المدخلات مباشرة في الاستعلام بدون تعقيم (SQL Injection)
+    # الثغرة هنا: دمج المدخلات مباشرة بدون حماية
     query = f"SELECT * FROM users WHERE username = '{username}' AND password = '{password}'"
     
     try:
         cursor.execute(query)
         user = cursor.fetchone()
         if user:
-            return f"Login Success! Welcome {user[1]}. Your role is {user[3]}."
+            return f"Login Success! Welcome {user[1]}. Your role is {user[3]}.", 200
         else:
             return "Login Failed: Invalid credentials.", 401
     except Exception as e:
