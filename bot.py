@@ -1,108 +1,142 @@
 import asyncio
 import logging
 import os
-import aiohttp
+import re
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
+from telethon.sync import TelegramClient
+from telethon.sessions import StringSession
 from flask import Flask
 from threading import Thread
-import holehe
 
 # --- الإعدادات ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")  # مفتاح LeakInsight من RapidAPI
-RAPIDAPI_HOST = "leakinsight.p.rapidapi.com"
+API_ID = int(os.getenv("API_ID", 0))
+API_HASH = os.getenv("API_HASH")
+TG_SESSION = os.getenv("TG_SESSION")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 
+# تهيئة الحساب الوسيط (Userbot)
+client = TelegramClient(StringSession(TG_SESSION), API_ID, API_HASH)
+
+# --- قائمة البوتات المستهدفة (يمكنك إضافة المزيد) ---
+# التنسيق: {'username': 'اسم البوت بدون @', 'command_prefix': 'الأمر الذي يسبق البحث (أو None)'}
+TARGET_BOTS = [
+    {"username": "goodsearch_robot", "prefix": "/search "},  # LeakOsint
+    {"username": "GtaSearchOsntBot", "prefix": "/search "},  # GTA Search
+    {"username": "Dyxless_infoo_bot", "prefix": ""},         # Dyxless (يقبل النص مباشرة غالباً)
+    {"username": "Sherlock_Holmes_OSINT_bot", "prefix": ""}  # Sherlock (لأسماء المستخدمين)
+]
+
 # --- خادم ويب بسيط ---
 app = Flask('')
 @app.route('/')
-def home(): return "Leak Search Engine is Alive!"
+def home(): return "Meta OSINT Bot is Alive!"
 def run_flask(): app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
 
-# --- دالة البحث في LeakInsight ---
-async def search_leakinsight(query: str):
-    url = f"https://{RAPIDAPI_HOST}/search"
-    headers = {
-        "X-RapidAPI-Key": RAPIDAPI_KEY,
-        "X-RapidAPI-Host": RAPIDAPI_HOST
-    }
-    params = {"query": query, "limit": 5}  # البحث بـ 5 نتائج كحد أقصى
+# --- دالة الاستعلام من بوت واحد ---
+async def query_single_bot(bot_info: dict, query: str):
+    target = bot_info["username"]
+    prefix = bot_info["prefix"]
+    message_text = f"{prefix}{query}".strip()
     
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(url, headers=headers, params=params, timeout=15) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if data and data.get("results"):
-                        return data["results"]
-                    return "❌ لم يتم العثور على نتائج في قاعدة بيانات LeakInsight."
-                elif response.status == 403:
-                    return "⚠️ مفتاح RapidAPI غير صالح أو انتهت صلاحيته."
-                else:
-                    return f"⚠️ فشل الاتصال بـ LeakInsight (كود: {response.status})."
-        except Exception as e:
-            logging.error(f"LeakInsight Error: {e}")
-            return "⚠️ فشل الاتصال بمحرك LeakInsight."
-
-# --- دالة التحقق من البريد الإلكتروني باستخدام Holehe ---
-async def check_email_holehe(email: str):
     try:
-        # تشغيل Holehe للتحقق من البريد الإلكتروني
-        results = await asyncio.to_thread(holehe.main, email)
-        # Holehe يرجع قائمة من النتائج، نبحث عن تيك توك
-        for site, exists in results.items():
-            if site.lower() == "tiktok" and exists:
-                return "✅ البريد الإلكتروني مسجل في تيك توك."
-        return "❌ البريد الإلكتروني غير مسجل في تيك توك (أو لم يتم التحقق منه)."
+        # إرسال الرسالة
+        sent_msg = await client.send_message(target, message_text)
+        
+        # الانتظار حتى يرد البوت (Timeout 15 ثانية)
+        response_text = ""
+        for _ in range(15): 
+            await asyncio.sleep(1)
+            # جلب آخر رسالة من البوت
+            messages = await client.get_messages(target, limit=1)
+            if messages and messages[0].id != sent_msg.id:
+                response_text = messages[0].text or ""
+                # التحقق من وجود أزرار وإضافتها
+                if messages[0].buttons:
+                    response_text += "\n[يحتوي على أزرار تفاعلية]"
+                break
+        
+        if not response_text:
+            return {"source": target, "status": "no_response", "data": None}
+            
+        # استخراج البيانات بـ Regex
+        emails = re.findall(r'[\w\.-]+@[\w\.-]+\.\w+', response_text)
+        phones = re.findall(r'\+?\d[\d -]{8,15}\d', response_text)
+        
+        return {
+            "source": target,
+            "status": "success",
+            "email": list(set(emails))[0] if emails else None,
+            "phone": list(set(phones))[0] if phones else None,
+            "raw": response_text[:300] # مقتطف من الرد
+        }
+        
     except Exception as e:
-        logging.error(f"Holehe Error: {e}")
-        return "⚠️ فشل التحقق من البريد الإلكتروني."
+        logging.error(f"Error querying {target}: {e}")
+        return {"source": target, "status": "error", "data": str(e)}
 
-# --- أوامر البوت ---
+# --- دالة تجميع النتائج (Meta Search) ---
+async def meta_search(query: str):
+    tasks = []
+    for bot_info in TARGET_BOTS:
+        tasks.append(query_single_bot(bot_info, query))
+    
+    # تشغيل جميع البوتات في نفس الوقت (Parallel Execution)
+    results = await asyncio.gather(*tasks)
+    return results
+
+# --- أوامر البوت الخاص بك ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.answer(
-        "مرحباً بك في محرك البحث في التسريبات! 🕵️‍♂️\n\n"
-        "أرسل لي **اسم مستخدم** أو **بريد إلكتروني** أو **رقم هاتف** للبحث عنه في قواعد بيانات التسريبات الحقيقية."
+        "مرحباً بك في **Meta OSINT Bot**! 🕵️‍♂️\n"
+        "أنا لا أمتلك قاعدة بيانات، بل أنا محرك يبحث في عدة بوتات استخباراتية في نفس الوقت.\n"
+        "أرسل اسم مستخدم، بريد إلكتروني، أو رقم هاتف، وسأجمع لك النتائج."
     )
 
 @dp.message(F.text)
 async def handle_query(message: types.Message):
     query = message.text.strip()
-    status_msg = await message.answer(f"⏳ جاري البحث عن `{query}` في مليارات السجلات المسربة...")
+    status_msg = await message.answer(f"⏳ جاري إرسال `{query}` إلى {len(TARGET_BOTS)} بوتات استخباراتية... (قد يستغرق 15 ثانية)")
     
-    response_text = f"🔎 **تقرير التسريبات لـ:** `{query}`\n\n"
+    results = await meta_search(query)
     
-    # 1. البحث في LeakInsight
-    leak_results = await search_leakinsight(query)
+    response_text = f"🌐 **تقرير البحث الشامل (Meta-Search) لـ:** `{query}`\n\n"
+    found_anything = False
     
-    if isinstance(leak_results, list) and leak_results:
-        response_text += f"🚨 **LeakInsight (عينة):**\n"
-        for i, res in enumerate(leak_results[:3], 1):
-            # عرض بيانات مختصرة (بدون كلمات مرور)
-            email = res.get("email", "N/A")
-            phone = res.get("phone", "N/A")
-            source = res.get("source", "N/A")
-            response_text += f"{i}. 📧: `{email}` | 📱: `{phone}` | 📂: {source}\n"
-    elif isinstance(leak_results, str):
-        response_text += f"{leak_results}\n\n"
-    
-    # 2. إذا كان المدخل بريدًا إلكترونيًا، نتحقق منه باستخدام Holehe
-    if "@" in query and "." in query:
-        holehe_result = await check_email_holehe(query)
-        response_text += f"📧 **Holehe (التحقق):**\n{holehe_result}\n\n"
-    
-    if len(response_text) < 60:  # إذا لم يتم العثور على أي شيء
-        response_text += "❌ لم يتم العثور على نتائج في المصادر المتاحة."
+    for res in results:
+        if res["status"] == "success":
+            if res.get("email") or res.get("phone"):
+                found_anything = True
+                response_text += f"✅ **{res['source']}:**\n"
+                if res.get("email"): response_text += f"  📧 إيميل: `{res['email']}`\n"
+                if res.get("phone"): response_text += f"  📱 هاتف: `{res['phone']}`\n"
+            else:
+                response_text += f"⚪ **{res['source']}:** لم يجد بيانات اتصال مباشرة (لكن قد يوجد تقرير).\n"
+        elif res["status"] == "no_response":
+            response_text += f"⏳ **{res['source']}:** لم يرد في الوقت المحدد.\n"
+        else:
+            response_text += f"❌ **{res['source']}:** خطأ في الاتصال.\n"
+
+    if not found_anything:
+        response_text += "\n⚠️ **الخلاصة:** لم يتم العثور على إيميل أو هاتف مباشر في ردود البوتات. قد تكون البيانات مدفوعة أو غير موجودة في التسريبات."
 
     await status_msg.edit_text(response_text, parse_mode="Markdown")
 
 async def main():
+    try:
+        await client.start()
+        logging.info("Userbot Connected Successfully!")
+    except Exception as e:
+        logging.error(f"Failed to start Userbot: {e}")
+        return
+
     Thread(target=run_flask, daemon=True).start()
+    logging.info("Starting Meta Bot...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
