@@ -1,82 +1,71 @@
 <!DOCTYPE html>
-<html lang="en" dir="ltr">
+<html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Private API Engine</title>
+    <title>محرك OSINT المتقدم</title>
     <style>
-        :root { --bg: #0f0f0f; --card: #1a1a1a; --text: #e0e0e0; --accent: #00f2fe; --danger: #ff4757; --success: #2ed573; }
-        body { background-color: var(--bg); color: var(--text); font-family: 'Segoe UI', Tahoma, sans-serif; display: flex; justify-content: center; padding: 20px; margin: 0; }
-        .container { background: var(--card); padding: 30px; border-radius: 12px; width: 100%; max-width: 650px; box-shadow: 0 10px 30px rgba(0,0,0,0.7); border: 1px solid #333; }
-        h2 { text-align: center; color: var(--accent); margin-bottom: 25px; text-transform: uppercase; }
-        .input-group { display: flex; gap: 10px; margin-bottom: 20px; }
-        input[type="text"] { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #444; background: #222; color: white; font-size: 16px; outline: none; }
-        button { padding: 12px 25px; background: var(--accent); color: #000; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
-        
-        .error-box { background: #2a1515; border: 1px solid var(--danger); border-radius: 8px; padding: 15px; margin-bottom: 20px; color: var(--danger); text-align: center; font-weight: bold; font-size: 14px; word-wrap: break-word;}
-        .leaked-box { background: #2a1515; border: 1px solid var(--danger); border-radius: 8px; padding: 15px; margin-bottom: 20px; }
-        .leaked-box h3 { margin: 0 0 10px 0; color: var(--danger); font-size: 16px; text-align: center; }
-        .result-item { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #2a2a2a; font-size: 14px; }
-        .key { color: #888; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #0f0f0f; color: #e0e0e0; margin: 0; padding: 20px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 700px; background: #1a1a1a; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.7); }
+        h1 { text-align: center; color: #00f2fe; }
+        .search-box { display: flex; gap: 10px; margin-bottom: 20px; }
+        input { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #333; background: #222; color: #fff; font-size: 16px; }
+        button { padding: 12px 25px; background: #00f2fe; border: none; border-radius: 8px; color: #000; font-weight: bold; cursor: pointer; }
+        .section { margin-top: 25px; border-top: 1px solid #333; padding-top: 15px; }
+        .section-title { color: #00f2fe; margin-bottom: 10px; font-size: 1.2em; }
+        .data-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #2a2a2a; }
+        .label { color: #888; }
         .value { font-weight: bold; color: #fff; }
-        .leaked-box .value { color: var(--danger); }
-        
-        .live-box { background: #111; border-radius: 8px; padding: 15px; border: 1px solid #333; }
-        .live-box h3 { margin: 0 0 10px 0; color: var(--accent); font-size: 16px; text-align: center; }
-        .bio-box { background: #222; padding: 10px; border-radius: 5px; margin-top: 5px; color: #aaa; border: 1px dashed #444; }
+        .status-valid { color: #2ed573; font-weight: bold; }
+        .status-invalid { color: #ff4757; font-weight: bold; }
+        .error { background: #4a1c1c; color: #ff6b6b; padding: 15px; border-radius: 8px; text-align: center; margin-top: 20px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h2>PRIVATE API ENGINE</h2>
+        <h1>محرك OSINT المتقدم</h1>
         <form method="POST">
-            <div class="input-group">
-                <input type="text" name="username" placeholder="Enter Username..." value="{{ username }}" required>
-                <button type="submit">Analyze</button>
+            <div class="search-box">
+                <input type="text" name="query" placeholder="أدخل اسم المستخدم، البريد الإلكتروني، أو رقم الهاتف..." value="{{ query }}" required>
+                <button type="submit">بحث شامل</button>
             </div>
         </form>
 
         {% if error %}
-            <!-- هنا سيظهر الخطأ الحقيقي القادم من بايثون -->
-            <div class="error-box">
-                خطأ حقيقي: {{ error }}
-            </div>
+            <div class="error">{{ error }}</div>
         {% endif %}
 
         {% if result %}
             {% if result.leaked_info %}
-                <div class="leaked-box">
-                    <h3>⚠️ LEAKED DATABASE MATCH</h3>
-                    <div class="result-item">
-                        <span class="key">Email:</span>
-                        <span class="value">{{ result.leaked_info.email }}</span>
-                    </div>
-                    <div class="result-item">
-                        <span class="key">Phone:</span>
-                        <span class="value">{{ result.leaked_info.phone }}</span>
-                    </div>
-                </div>
-            {% else %}
-                <div style="text-align: center; color: #888; margin-bottom: 20px;">No leaked records found in local DB.</div>
+            <div class="section">
+                <div class="section-title">🗄️ معلومات من قاعدة البيانات المسربة</div>
+                <div class="data-row"><span class="label">البريد الإلكتروني:</span><span class="value">{{ result.leaked_info.email }}</span></div>
+                <div class="data-row"><span class="label">رقم الهاتف:</span><span class="value">{{ result.leaked_info.phone }}</span></div>
+                <div class="data-row"><span class="label">اسم المستخدم:</span><span class="value">{{ result.leaked_info.username }}</span></div>
+            </div>
             {% endif %}
 
-            {% if result.live_stats %}
-                <div class="live-box">
-                    <h3>LIVE PRIVATE API DATA</h3>
-                    {% for key, value in result.live_stats.items() %}
-                        {% if key == 'Bio' %}
-                            <div class="result-item" style="flex-direction: column; align-items: flex-start;">
-                                <span class="key">Bio:</span>
-                                <div class="bio-box">{{ value }}</div>
-                            </div>
-                        {% else %}
-                            <div class="result-item">
-                                <span class="key">{{ key }}:</span>
-                                <span class="value">{{ value }}</span>
-                            </div>
-                        {% endif %}
-                    {% endfor %}
+            {% if result.email_check %}
+            <div class="section">
+                <div class="section-title">📧 التحقق من البريد الإلكتروني</div>
+                <div class="data-row">
+                    <span class="label">الحالة:</span>
+                    <span class="value {% if result.email_check.status == 'valid' %}status-valid{% else %}status-invalid{% endif %}">
+                        {{ result.email_check.message }}
+                    </span>
                 </div>
+            </div>
+            {% endif %}
+
+            {% if result.live_profile %}
+            <div class="section">
+                <div class="section-title">🌐 البيانات العامة (Live Profile)</div>
+                <div class="data-row"><span class="label">اسم المستخدم:</span><span class="value">{{ result.live_profile.username }}</span></div>
+                <div class="data-row"><span class="label">الاسم:</span><span class="value">{{ result.live_profile.nickname }}</span></div>
+                <div class="data-row"><span class="label">المتابعون:</span><span class="value">{{ result.live_profile.followers }}</span></div>
+                <div class="data-row"><span class="label">الإعجابات:</span><span class="value">{{ result.live_profile.likes }}</span></div>
+                <div class="data-row"><span class="label">النبذة:</span><span class="value">{{ result.live_profile.bio }}</span></div>
+            </div>
             {% endif %}
         {% endif %}
     </div>
