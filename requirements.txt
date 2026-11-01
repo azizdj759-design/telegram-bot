@@ -1,5 +1,4 @@
 aiogram==3.4.1
-apify-client==1.7.1
 Flask==3.0.2
 aiohttp==3.9.3
-xposedornot==1.0.1
+holehe==1.0.6
