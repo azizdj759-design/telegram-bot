@@ -3,7 +3,7 @@ import logging
 import os
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from apify_client import ApifyClient
+from apify_client import ApifyClientAsync
 from flask import Flask
 from threading import Thread
 
@@ -15,7 +15,8 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 
-apify_client = ApifyClient(APIFY_TOKEN)
+# --- تهيئة عميل Apify غير المتزامن ---
+apify_client = ApifyClientAsync(APIFY_TOKEN)
 
 # --- خادم ويب بسيط لإبقاء Render نشطاً ---
 app = Flask('')
@@ -27,7 +28,7 @@ def home():
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
 
-# --- دالة البحث الحقيقية عبر Apify ---
+# --- دالة البحث عبر Apify (بشكل غير متزامن) ---
 async def search_via_apify(username: str):
     try:
         run_input = {
@@ -35,16 +36,14 @@ async def search_via_apify(username: str):
             "maxResults": 1
         }
         
-        run = await asyncio.to_thread(
-            apify_client.actor("logiover/tiktok-profile-email-scraper").call,
-            run_input=run_input
-        )
+        # استدعاء الـ Actor بشكل غير متزامن
+        run = await apify_client.actor("logiover/tiktok-profile-email-scraper").call(run_input=run_input)
         
+        if run is None:
+            return None
+
         dataset_id = run["defaultDatasetId"]
-        items = await asyncio.to_thread(
-            apify_client.dataset(dataset_id).list_items,
-            limit=1
-        )
+        items = await apify_client.dataset(dataset_id).list_items(limit=1)
         
         if items.items:
             return items.items[0]
