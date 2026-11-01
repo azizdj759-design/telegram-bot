@@ -1,149 +1,115 @@
 import asyncio
 import logging
 import os
-import sqlite3
-import httpx
+import re
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from apify_client import ApifyClientAsync
+from telethon import TelegramClient, events
 from flask import Flask
 from threading import Thread
 
-# --- الإعدادات ---
+# --- إعدادات بوت تيليجرام الخاص بك ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-APIFY_TOKEN = os.getenv("APIFY_TOKEN")
-
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-logging.basicConfig(level=logging.INFO)
-apify_client = ApifyClientAsync(APIFY_TOKEN)
 
-# --- 1. إعداد قاعدة البيانات المحلية (Leaks DB) ---
-def init_db():
-    if not os.path.exists('leaks.db'):
-        conn = sqlite3.connect('leaks.db')
-        cursor = conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS leaks (username TEXT, email TEXT, phone TEXT)''')
-        dummy_data = [('test_account', 'test@example.com', '+123456789')]
-        cursor.executemany('INSERT OR IGNORE INTO leaks VALUES (?, ?, ?)', dummy_data)
-        conn.commit()
-        conn.close()
-init_db()
+# --- إعدادات حساب المستخدم (Userbot) ---
+API_ID = 1234567 # ضع الـ API ID الخاص بك
+API_HASH = "ضع_الـ_API_HASH_هنا"
+TARGET_BOT = "tiktokinfobot" 
 
-def search_local_leaks(username: str):
-    try:
-        conn = sqlite3.connect('leaks.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT email, phone FROM leaks WHERE LOWER(username) = ?", (username.lower(),))
-        result = cursor.fetchone()
-        conn.close()
-        return {"email": result[0], "phone": result[1]} if result else None
-    except Exception:
-        return None
+client = TelegramClient('anon', API_ID, API_HASH)
 
-# --- 2. محرك Hudson Rock (كشف تسريبات الاعتماد) ---
-async def check_hudson_rock(email: str):
-    """البحث عن البريد في سجلات البرمجيات الخبيثة (Infostealer Logs)"""
-    try:
-        async with httpx.AsyncClient() as client:
-            # استخدام API المجاني من Hudson Rock
-            url = f"https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-email?email={email}"
-            response = await client.get(url, timeout=15)
-            if response.status_code == 200:
-                data = response.json()
-                # التحقق من وجود بيانات مسربة
-                if data.get("message") != "No results found" and data.get("data"):
-                    return {"source": "Hudson Rock (Infostealer)", "details": data.get("data")}
-    except Exception as e:
-        print(f"Hudson Rock Error: {e}")
-    return None
-
-# --- 3. محرك PSBDMP (البحث في Pastebin) ---
-async def check_psbdmp(email: str):
-    """البحث عن البريد في تسريبات Pastebin"""
-    try:
-        async with httpx.AsyncClient() as client:
-            url = f"https://psbdmp.ws/api/search/{email}"
-            response = await client.get(url, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if data and len(data) > 0:
-                    return {"source": "Pastebin (PSBDMP)", "count": len(data), "latest": data[0].get("text", "")[:100] + "..."}
-    except Exception as e:
-        print(f"PSBDMP Error: {e}")
-    return None
-
-# --- 4. الكشط العام (Apify) ---
-async def search_apify(username: str):
-    try:
-        run_input = {"profiles": [f"https://www.tiktok.com/@{username}"], "maxResults": 1}
-        run = await apify_client.actor("logiover/tiktok-profile-email-scraper").call(run_input=run_input)
-        if run:
-            dataset_id = run["defaultDatasetId"]
-            items = await apify_client.dataset(dataset_id).list_items(limit=1)
-            if items.items:
-                return items.items[0]
-    except Exception as e:
-        print(f"Apify Error: {e}")
-    return None
-
-# --- خادم ويب بسيط لإبقاء Render نشطاً ---
+# --- خادم ويب بسيط ---
 app = Flask('')
 @app.route('/')
-def home(): return "OSINT Hybrid Engine is Alive!"
+def home(): return "Proxy Scraper is Alive!"
 def run_flask(): app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
 
-# --- أوامر البوت ---
+# --- دالة اختراق نظام الدفع / سحب البيانات ---
+async def scrape_and_bypass(username: str):
+    try:
+        if not client.is_connected():
+            await client.connect()
+            
+        # إرسال الطلب للبوت
+        await client.send_message(TARGET_BOT, f"/search {username}") 
+        await asyncio.sleep(4) # الانتظار ليرد البوت
+        
+        messages = await client.get_messages(TARGET_BOT, limit=1)
+        if messages:
+            msg = messages[0]
+            response_text = msg.text or ""
+            
+            # 1. هل البوت يطلب دفع؟
+            if "pay" in response_text.lower() or "balance" in response_text.lower() or "رصيد" in response_text:
+                
+                # محاولة إرسال أوامر الرصيد المجاني تلقائياً
+                free_commands = ["/daily", "/bonus", "/free", "/checkin"]
+                for cmd in free_commands:
+                    await client.send_message(TARGET_BOT, cmd)
+                    await asyncio.sleep(2)
+                
+                # قراءة الردود بعد محاولة الحصول على رصيد
+                messages = await client.get_messages(TARGET_BOT, limit=3)
+                for m in messages:
+                    if m.text and ("success" in m.text.lower() or "added" in m.text.lower() or "تم" in m.text):
+                        # إذا حصلنا على رصيد، نعيد المحاولة
+                        await client.send_message(TARGET_BOT, f"/search {username}")
+                        await asyncio.sleep(4)
+                        final_msg = (await client.get_messages(TARGET_BOT, limit=1))[0]
+                        return process_message(final_msg)
+
+                # إذا فشلنا في الحصول على رصيد، نرجع الرسالة التي تطلب الدفع
+                return {"error": "البوت يطلب دفع. حاول استخدام حسابات أخرى أو تجاوز الحظر يدوياً.", "raw": response_text, "buttons": msg.buttons}
+            
+            # 2. إذا لم يطلب دفع، نقوم بمعالجة الرسالة الطبيعية
+            return process_message(msg)
+            
+    except Exception as e:
+        print(f"Scraping Error: {e}")
+    return None
+
+def process_message(msg):
+    """دالة مساعدة لاستخراج البيانات من الرسالة"""
+    response_text = msg.text or ""
+    email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', response_text)
+    phone_match = re.search(r'\+?\d[\d -]{8,12}\d', response_text)
+    
+    return {
+        "email": email_match.group(0) if email_match else None,
+        "phone": phone_match.group(0) if phone_match else None,
+        "raw": response_text
+    }
+
+# --- أوامر البوت الخاص بك ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer("مرحباً! 🕵️‍♂️\nأرسل اسم مستخدم تيك توك للبحث في التسريبات والبيانات العامة.")
+    await message.answer("مرحباً! 🕵️‍♂️\nأرسل اسم مستخدم للبحث عبر الوسيط الذكي.")
 
 @dp.message(F.text)
 async def handle_query(message: types.Message):
-    query = message.text.strip()
-    status_msg = await message.answer(f"⏳ جاري تحليل `{query}` عبر محركات OSINT المتعددة...")
+    username = message.text.strip().lstrip('@')
+    status_msg = await message.answer(f"⏳ جاري استغلال البوت لسحب `{username}`...")
     
-    response_text = f"🔎 **تقرير OSINT المتقدم لـ:** `{query}`\n\n"
+    data = await scrape_and_bypass(username)
     
-    # 1. البحث في قاعدة البيانات المحلية (إذا كان اسم مستخدم)
-    if "@" not in query:
-        local_data = search_local_leaks(query)
-        if local_data:
-            response_text += f"🚨 **بيانات مسربة (محلي):**\n"
-            response_text += f"📧 الإيميل: `{local_data['email']}`\n"
-            response_text += f"📱 الهاتف: `{local_data['phone']}`\n\n"
-        
-        # 2. الكشط العام عبر Apify
-        live_data = await search_apify(query)
-        if live_data:
-            response_text += f"🌐 **بيانات عامة (Apify):**\n"
-            response_text += f"👤 الاسم: {live_data.get('nickname', 'N/A')}\n"
-            response_text += f"📊 المتابعون: {live_data.get('followerCount', 0):,}\n"
-            if live_data.get('email'):
-                response_text += f"📧 إيميل البايو: `{live_data.get('email')}`\n"
-            if live_data.get('phone'):
-                response_text += f"📱 هاتف البايو: `{live_data.get('phone')}`\n"
-            response_text += "\n"
-    
-    # 3. إذا كان المدخل بريداً إلكترونياً، نبحث في محركات التسريبات
-    if "@" in query and "." in query:
-        hr_result = await check_hudson_rock(query)
-        if hr_result:
-            response_text += f"🦠 **تسريب اعتماد (Hudson Rock):**\n"
-            response_text += f"تم العثور على البريد في سجلات برمجيات خبيثة.\n\n"
-        
-        psb_result = await check_psbdmp(query)
-        if psb_result:
-            response_text += f"📋 **تسريب Pastebin:**\n"
-            response_text += f"تم العثور على {psb_result['count']} تسريب.\n"
-            response_text += f"أحدث تسريب: `{psb_result['latest']}`\n\n"
-
-    if len(response_text) < 50: # إذا لم يتم العثور على أي شيء
-        response_text += "❌ لم يتم العثور على بيانات في المصادر المتاحة."
+    if data and "error" not in data:
+        response_text = f"🔎 **النتائج لـ:** `{username}`\n\n"
+        if data.get('email'): response_text += f"📧 **الإيميل:** `{data['email']}`\n"
+        if data.get('phone'): response_text += f"📱 **الهاتف:** `{data['phone']}`\n"
+        if not data.get('email') and not data.get('phone'): response_text += "⚠️ لم يتم العثور على إيميل أو هاتف."
+    elif data and "error" in data:
+        response_text = f"⛔ **تنبيه:** {data['error']}\n\n"
+        response_text += f"📄 **الرد من البوت:**\n`{data['raw'][:200]}`"
+    else:
+        response_text = f"❌ فشل السحب."
 
     await status_msg.edit_text(response_text, parse_mode="Markdown")
 
 async def main():
+    await client.start()
+    print("Telethon Client Started!")
     Thread(target=run_flask, daemon=True).start()
     await dp.start_polling(bot)
 
