@@ -7,66 +7,42 @@ import sqlite3
 import asyncio
 import json
 import re
-import httpx
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# --- إعدادات قاعدة البيانات المسربة ---
+# --- 1. إنشاء قاعدة بيانات تلقائياً (محاكاة للتسريبات) ---
 def init_db():
     conn = sqlite3.connect('leaks.db')
     cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS leaks (identifier TEXT PRIMARY KEY, email TEXT, phone TEXT, username TEXT)''')
-    # بيانات تجريبية للاختبار
+    cursor.execute('''CREATE TABLE IF NOT EXISTS leaks (username TEXT, email TEXT, phone TEXT)''')
+    # ضع هنا أي حسابات تريد تجربتها
     dummy_data = [
-        ('test@example.com', 'test@example.com', '+1234567890', 'testuser'),
-        ('+1234567890', 'test@example.com', '+1234567890', 'testuser')
+        ('nox.qxx', 'issa.contact@gmail.com', '+212 612-345678'),
+        ('test', 'admin@test.com', '+1 555-0199')
     ]
-    cursor.executemany('INSERT OR IGNORE INTO leaks VALUES (?, ?, ?, ?)', dummy_data)
+    cursor.executemany('INSERT OR IGNORE INTO leaks VALUES (?, ?, ?)', dummy_data)
     conn.commit()
     conn.close()
 
 init_db()
 
-def lookup_leaks_db(identifier: str):
-    """البحث في قاعدة البيانات المسربة"""
+def lookup_leaks_db(username: str):
     try:
         conn = sqlite3.connect('leaks.db')
         cursor = conn.cursor()
-        cursor.execute("SELECT email, phone, username FROM leaks WHERE LOWER(identifier) = ?", (identifier.lower(),))
+        cursor.execute("SELECT email, phone FROM leaks WHERE LOWER(username) = ?", (username.lower(),))
         result = cursor.fetchone()
         conn.close()
-        if result:
-            return {"email": result[0], "phone": result[1], "username": result[2], "source": "Leaked Database"}
-        return None
+        return {"email": result[0], "phone": result[1]} if result else None
     except Exception:
         return None
 
-async def check_email_via_password_reset(email: str):
-    """التحقق من وجود البريد الإلكتروني عبر واجهة استعادة كلمة المرور"""
-    # محاكاة طلب إلى واجهة برمجة التطبيقات الداخلية لتيك توك
-    # ملاحظة: هذا يتطلب ترويسات محددة ومحاكاة دقيقة
-    url = "https://api2-19-h2.musical.ly/aweme/v1/passport/find-password-via-email/"
-    headers = {
-        "User-Agent": "com.zhiliaoapp.musically/2022600030 (Linux; U; Android 12; en; Redmi Note 8; Build/SP1A.210812.016; Cronet/58.0.2991.0)"
-    }
-    payload = {"email": email}
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, json=payload, headers=headers, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("message") == "success" or "Sent successfully" in str(data):
-                    return {"status": "valid", "message": "البريد الإلكتروني مرتبط بحساب تيك توك"}
-            return {"status": "invalid", "message": "البريد الإلكتروني غير مرتبط بأي حساب"}
-    except Exception as e:
-        return {"status": "error", "message": f"فشل التحقق: {str(e)}"}
-
 def fetch_public_profile(username: str):
-    """جلب البيانات العامة من صفحة الحساب"""
     url = f"https://www.tiktok.com/@{username}"
     try:
-        response = curl_requests.get(url, impersonate="chrome110", timeout=15)
+        # استخدام curl_cffi لمحاكاة متصفح حقيقي
+        response = curl_requests.get(url, impersonate="chrome110", timeout=10)
         if response.status_code != 200:
             return None
         
@@ -81,13 +57,13 @@ def fetch_public_profile(username: str):
                 return {
                     "username": user.get("uniqueId"),
                     "nickname": user.get("nickname"),
-                    "region": user.get("region"),
-                    "followers": stats.get("followerCount"),
-                    "likes": stats.get("heartCount"),
-                    "bio": user.get("signature"),
+                    "followers": f"{stats.get('followerCount', 0):,}",
+                    "likes": f"{stats.get('heartCount', 0):,}",
+                    "bio": user.get("signature", "(None)"),
                 }
         return None
-    except Exception:
+    except Exception as e:
+        print(f"Scraping Error: {e}")
         return None
 
 @app.get("/", response_class=HTMLResponse)
@@ -95,38 +71,26 @@ async def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request, "result": None, "error": None, "query": ""})
 
 @app.post("/", response_class=HTMLResponse)
-async def search(request: Request, query: str = Form(...)):
-    query = query.strip()
+async def search(request: Request, query: str = Form(None)): # وضعنا None لتجنب خطأ الحقل الفارغ
+    if not query or query.strip() == "":
+        return templates.TemplateResponse("index.html", {"request": request, "result": None, "error": "الرجاء إدخال اسم مستخدم صالح.", "query": ""})
+        
+    username = query.strip().lstrip('@')
     results = {}
-    error_msg = None
-
-    # 1. البحث في قاعدة البيانات المسربة
-    leaked_data = lookup_leaks_db(query)
+    
+    # 1. البحث في التسريبات
+    leaked_data = lookup_leaks_db(username)
     if leaked_data:
         results["leaked_info"] = leaked_data
 
-    # 2. إذا كان الاستعلام يبدو كبريد إلكتروني، تحقق منه
-    if "@" in query:
-        email_check = await check_email_via_password_reset(query)
-        results["email_check"] = email_check
-    
-    # 3. جلب البيانات العامة (سواء كان الاستعلام اسم مستخدم أو بريد)
-    # سنحاول البحث عن اسم المستخدم في النتائج المسربة أولاً
-    username_to_check = query
-    if leaked_data and leaked_data.get("username"):
-        username_to_check = leaked_data["username"]
-    elif "@" not in query:
-        username_to_check = query.lstrip('@')
-    else:
-        username_to_check = None # لا يمكن استخدام البريد كاسم مستخدم مباشرة
+    # 2. الكشط المباشر
+    live_data = await asyncio.to_thread(fetch_public_profile, username)
+    if live_data:
+        results["live_profile"] = live_data
 
-    if username_to_check:
-        live_data = await asyncio.to_thread(fetch_public_profile, username_to_check)
-        if live_data:
-            results["live_profile"] = live_data
-
+    error_msg = None
     if not results:
-        error_msg = "لم يتم العثور على أي نتائج في المصادر المتاحة."
+        error_msg = "لم يتم العثور على أي بيانات لهذا المستخدم (قد يكون الحساب غير موجود أو تم حظر طلب الكشط من Render)."
 
     return templates.TemplateResponse("index.html", {"request": request, "result": results, "error": error_msg, "query": query})
 
