@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: ultimate-ai-trading-engine
+    name: advanced-ai-gateway
     env: docker
     region: oregon
     plan: free
