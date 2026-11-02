@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: institutional-market-engine
+    name: ai-instinct-trading-engine
     env: docker
     region: oregon
     plan: free
