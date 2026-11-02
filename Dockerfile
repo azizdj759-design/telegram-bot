@@ -1,12 +1,18 @@
-FROM python:3.11-slim-bookworm
+FROM python:3.10-slim
 
 WORKDIR /app
 
+# تثبيت الحزم الأساسية للنظام إذا لزم الأمر
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# نسخ وتثبيت متطلبات بايثون
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# نسخ باقي ملفات المشروع إلى الحاوية
 COPY . .
 
-EXPOSE 8501
-
-CMD streamlit run app.py --server.port=${PORT:-8501} --server.address=0.0.0.0
+# تشغيل التطبيق باستخدام منفذ Render المخصص أو المنفذ الافتراضي
+CMD uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}
