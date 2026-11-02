@@ -1,23 +1,27 @@
 import streamlit as st
 import pandas as pd
+import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
-from streamlit_lightweight_charts_pro import renderChart
 from core.data_fetcher import DataFetcher
 from core.smc_engine import SMCEngine
 from core.wave_engine import WaveEngine
 from core.signal_aggregator import SignalAggregator
 
 # إعدادات الصفحة
-st.set_page_config(page_title="منصة التحليل المؤسسي", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="منصة التحليل المؤسسي", layout="wide", initial_sidebar_state="expanded")
 st.title("منصة التحليل المؤسسي للأسواق")
 st.caption("محرك توافق متقدم (ICT/SMC + الموجات) مع رسم مناطق الصفقة على الشارت")
 
-# التحديث التلقائي
+# التحديث التلقائي كل 60 ثانية
 st_autorefresh(interval=60_000, key="market_refresh")
 
 with st.sidebar:
     st.header("إعدادات التحليل")
-    symbol = st.selectbox("الأصل", ["BTC/USDT (بيتكوين)", "GC=F (الذهب)", "CL=F (البترول)"])
+    symbol = st.selectbox("الأصل", [
+        "BTC/USDT (بيتكوين)", 
+        "GC=F (الذهب)", 
+        "CL=F (البترول)"
+    ])
     timeframe = st.selectbox("الإطار الزمني", ["1h", "4h", "1d"], index=1)
     min_confluence = st.slider("الحد الأدنى للتوافق", 1, 2, 2)
 
@@ -35,14 +39,18 @@ def run_analysis(symbol_raw, timeframe, min_confluence):
     
     return df, current_price, final
 
-symbol_map = {"BTC/USDT (بيتكوين)": "BTC/USDT", "GC=F (الذهب)": "GC=F", "CL=F (البترول)": "CL=F"}
+symbol_map = {
+    "BTC/USDT (بيتكوين)": "BTC/USDT", 
+    "GC=F (الذهب)": "GC=F", 
+    "CL=F (البترول)": "CL=F"
+}
 symbol_raw = symbol_map[symbol]
 
 try:
     with st.spinner("جاري تحليل السوق..."):
         df, current_price, final = run_analysis(symbol_raw, timeframe, min_confluence)
 
-    # --- عرض النتائج ---
+    # --- عرض النتائج النصية ---
     col1, col2, col3 = st.columns(3)
     col1.metric("السعر الحالي", f"${current_price:,.2f}")
     
@@ -60,51 +68,61 @@ try:
         c3.metric("الهدف", f"${final['take_profit']:,.2f}" if final["take_profit"] else "—")
         c4.metric("المخاطرة/العائد", f"1:{final['risk_reward']}")
 
-    # --- شارت TradingView المتقدم ---
+    # --- شارت Plotly الاحترافي ---
     st.subheader("الرسم البياني التفاعلي")
-    
-    # تحويل البيانات إلى تنسيق الشارت
-    chart_data = []
-    for index, row in df.iterrows():
-        chart_data.append({
-            "time": str(index.date()) if timeframe == "1d" else str(index),
-            "open": float(row["open"]),
-            "high": float(row["high"]),
-            "low": float(row["low"]),
-            "close": float(row["close"]),
-        })
 
-    # إعداد الشارت الأساسي
-    chart_options = {
-        "layout": {"background": {"color": "#131722"}, "textColor": "#d1d4dc"},
-        "grid": {"vertLines": {"color": "#2B2B43"}, "horzLines": {"color": "#363C4E"}},
-    }
+    fig = go.Figure()
 
-    series = [{
-        "type": "Candlestick",
-        "data": chart_data,
-        "options": {"upColor": "#26a69a", "downColor": "#ef5350"}
-    }]
+    # 1. رسم الشموع اليابانية
+    fig.add_trace(go.Candlestick(
+        x=df.index,
+        open=df["open"],
+        high=df["high"],
+        low=df["low"],
+        close=df["close"],
+        increasing_line_color="#26a69a",
+        decreasing_line_color="#ef5350",
+        name="السعر"
+    ))
 
-    # --- رسم مناطق الصفقة مباشرة على الشارت ---
-    if final["decision"] != "انتظار":
-        # إضافة خطوط أفقية للدخول ووقف الخسارة والهدف
-        series[0]["price_lines"] = [
-            {"price": final["entry"], "color": "#2962FF", "title": "Entry"},
-            {"price": final["stop_loss"], "color": "#EF5350", "title": "SL"},
-            {"price": final["take_profit"], "color": "#26A69A", "title": "TP"}
-        ]
+    # 2. رسم منطقة الصفقة (إذا وجدت)
+    if final["decision"] != "انتظار" and final["entry"] is not None:
+        entry = final["entry"]
+        sl = final["stop_loss"]
+        tp = final["take_profit"]
+
+        # مستطيل منطقة الدخول (يظلل بين الدخول والهدف)
+        fig.add_shape(
+            type="rect",
+            x0=df.index[-1],
+            x1=df.index[-1] + pd.Timedelta(hours=10), # عرض المستطيل
+            y0=min(entry, tp),
+            y1=max(entry, tp),
+            fillcolor="rgba(38, 166, 154, 0.2)", # لون أخضر شفاف
+            line=dict(width=0),
+            layer="below"
+        )
         
-        # إضافة مستطيل يظلل منطقة الصفقة (من الدخول إلى الهدف/الوقف)
-        # نستخدم علامة (marker) أو مستطيل إذا كانت المكتبة تدعم ذلك
-        # في lightweight-charts-pro، يمكن استخدام annotations
-        # للتبسيط، سنعتمد على الخطوط الأفقية الواضحة
+        # خط الدخول
+        fig.add_hline(y=entry, line_dash="dash", line_color="#2962FF", annotation_text="دخول", annotation_position="top left")
+        
+        # خط وقف الخسارة
+        fig.add_hline(y=sl, line_dash="dot", line_color="#EF5350", annotation_text="وقف خسارة", annotation_position="bottom left")
+        
+        # خط الهدف
+        if tp:
+            fig.add_hline(y=tp, line_dash="dot", line_color="#26A69A", annotation_text="هدف", annotation_position="top left")
 
-    renderChart(
-        series=series,
-        options=chart_options,
-        height=600
+    # تنسيق الشارت
+    fig.update_layout(
+        template="plotly_dark",
+        xaxis_rangeslider_visible=False,
+        height=600,
+        margin=dict(l=20, r=20, t=20, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
+    
+    st.plotly_chart(fig, use_container_width=True)
 
 except Exception as e:
     st.error(f"حدث خطأ في التحليل: {e}")
