@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: institutional-market-engine
+    env: docker
+    region: oregon
+    plan: free
