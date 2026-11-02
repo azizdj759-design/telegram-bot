@@ -1,128 +1,187 @@
-import streamlit as st
+import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
-from streamlit_autorefresh import st_autorefresh
-from core.data_fetcher import DataFetcher
-from core.smc_engine import SMCEngine
-from core.wave_engine import WaveEngine
-from core.signal_aggregator import SignalAggregator
+import yfinance as yf
+from fastapi import FastAPI, HTTPException
 
-# إعدادات الصفحة
-st.set_page_config(page_title="منصة التحليل المؤسسي", layout="wide", initial_sidebar_state="expanded")
-st.title("منصة التحليل المؤسسي للأسواق")
-st.caption("محرك توافق متقدم (ICT/SMC + الموجات) مع رسم مناطق الصفقة على الشارت")
+app = FastAPI(
+    title="Advanced Gold & Market Analyzer API",
+    version="1.0",
+    description=(
+        "تحليل أسواق الذهب عبر استراتيجيات SMC, ICT, موجات أليوت، والتحليل"
+        " الكلاسيكي"
+    ),
+)
 
-# التحديث التلقائي كل 60 ثانية
-st_autorefresh(interval=60_000, key="market_refresh")
 
-with st.sidebar:
-    st.header("إعدادات التحليل")
-    symbol = st.selectbox("الأصل", [
-        "BTC/USDT (بيتكوين)", 
-        "GC=F (الذهب)", 
-        "CL=F (البترول)"
-    ])
-    timeframe = st.selectbox("الإطار الزمني", ["1h", "4h", "1d"], index=1)
-    min_confluence = st.slider("الحد الأدنى للتوافق", 1, 2, 2)
+class AdvancedGoldAnalyzer:
 
-@st.cache_data(ttl=60)
-def run_analysis(symbol_raw, timeframe, min_confluence):
-    fetcher = DataFetcher()
-    df = fetcher.fetch_ohlcv(symbol_raw, timeframe)
-    current_price = fetcher.get_current_price(symbol_raw)
+  def __init__(self, symbol="GC=F", period="60d", interval="1h"):
+    self.symbol = symbol
+    self.period = period
+    self.interval = interval
+    self.df = None
 
-    smc_signal = SMCEngine().analyze(df)
-    wave_signal = WaveEngine().analyze(df)
+  def fetch_data(self):
+    ticker = yf.Ticker(self.symbol)
+    self.df = ticker.history(period=self.period, interval=self.interval)
+    if self.df.empty:
+      raise HTTPException(
+          status_code=500, detail="لم يتم استرجاع أي بيانات من السوق."
+      )
+    self.df = self.df[["Open", "High", "Low", "Close", "Volume"]].dropna()
 
-    aggregator = SignalAggregator(min_confluence=min_confluence)
-    final = aggregator.aggregate([smc_signal, wave_signal])
-    
-    return df, current_price, final
+  def apply_technical_analysis(self):
+    df = self.df
+    df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
+    df["EMA_200"] = df["Close"].ewm(span=200, adjust=False).mean()
 
-symbol_map = {
-    "BTC/USDT (بيتكوين)": "BTC/USDT", 
-    "GC=F (الذهب)": "GC=F", 
-    "CL=F (البترول)": "CL=F"
-}
-symbol_raw = symbol_map[symbol]
+    delta = df["Close"].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df["RSI"] = 100 - (100 / (1 + rs))
 
-try:
-    with st.spinner("جاري تحليل السوق..."):
-        df, current_price, final = run_analysis(symbol_raw, timeframe, min_confluence)
-
-    # --- عرض النتائج النصية ---
-    col1, col2, col3 = st.columns(3)
-    col1.metric("السعر الحالي", f"${current_price:,.2f}")
-    
-    if final["decision"] == "انتظار":
-        col2.warning(f"الوضع: {final['reason']}")
-        col3.metric("نسبة النجاح", "0%")
-    else:
-        col2.success(f"القرار: {final['decision']}")
-        col3.metric("نسبة النجاح المتوقعة", f"{final['win_rate']}%")
-
-    if final["decision"] != "انتظار":
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("نقطة الدخول", f"${final['entry']:,.2f}")
-        c2.metric("وقف الخسارة", f"${final['stop_loss']:,.2f}")
-        c3.metric("الهدف", f"${final['take_profit']:,.2f}" if final["take_profit"] else "—")
-        c4.metric("المخاطرة/العائد", f"1:{final['risk_reward']}")
-
-    # --- شارت Plotly الاحترافي ---
-    st.subheader("الرسم البياني التفاعلي")
-
-    fig = go.Figure()
-
-    # 1. رسم الشموع اليابانية
-    fig.add_trace(go.Candlestick(
-        x=df.index,
-        open=df["open"],
-        high=df["high"],
-        low=df["low"],
-        close=df["close"],
-        increasing_line_color="#26a69a",
-        decreasing_line_color="#ef5350",
-        name="السعر"
-    ))
-
-    # 2. رسم منطقة الصفقة (إذا وجدت)
-    if final["decision"] != "انتظار" and final["entry"] is not None:
-        entry = final["entry"]
-        sl = final["stop_loss"]
-        tp = final["take_profit"]
-
-        # مستطيل منطقة الدخول (يظلل بين الدخول والهدف)
-        fig.add_shape(
-            type="rect",
-            x0=df.index[-1],
-            x1=df.index[-1] + pd.Timedelta(hours=10), # عرض المستطيل
-            y0=min(entry, tp),
-            y1=max(entry, tp),
-            fillcolor="rgba(38, 166, 154, 0.2)", # لون أخضر شفاف
-            line=dict(width=0),
-            layer="below"
-        )
-        
-        # خط الدخول
-        fig.add_hline(y=entry, line_dash="dash", line_color="#2962FF", annotation_text="دخول", annotation_position="top left")
-        
-        # خط وقف الخسارة
-        fig.add_hline(y=sl, line_dash="dot", line_color="#EF5350", annotation_text="وقف خسارة", annotation_position="bottom left")
-        
-        # خط الهدف
-        if tp:
-            fig.add_hline(y=tp, line_dash="dot", line_color="#26A69A", annotation_text="هدف", annotation_position="top left")
-
-    # تنسيق الشارت
-    fig.update_layout(
-        template="plotly_dark",
-        xaxis_rangeslider_visible=False,
-        height=600,
-        margin=dict(l=20, r=20, t=20, b=20),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    high_low = df["High"] - df["Low"]
+    high_close = np.abs(df["High"] - df["Close"].shift())
+    low_close = np.abs(df["Low"] - df["Close"].shift())
+    true_range = pd.concat([high_low, high_close, low_close], axis=1).max(
+        axis=1
     )
-    
-    st.plotly_chart(fig, use_container_width=True)
+    df["ATR"] = true_range.rolling(window=14).mean()
 
-except Exception as e:
-    st.error(f"حدث خطأ في التحليل: {e}")
+  def detect_smc_ict_elements(self):
+    df = self.df
+    df["FVG_Bullish"] = (df["Low"].shift(-1) > df["High"].shift(1)) & (
+        df["Close"] > df["Open"]
+    )
+    df["FVG_Bearish"] = (df["High"].shift(-1) < df["Low"].shift(1)) & (
+        df["Close"] < df["Open"]
+    )
+
+    df["Order_Block_Buy"] = (df["Close"].shift(1) < df["Open"].shift(1)) & (
+        df["Close"] > df["Open"] * 1.002
+    )
+    df["Order_Block_Sell"] = (df["Close"].shift(1) > df["Open"].shift(1)) & (
+        df["Close"] < df["Open"] * 0.998
+    )
+
+  def elliott_wave_approximation(self):
+    df = self.df
+    window = 5
+    df["Swing_High"] = (
+        df["High"] == df["High"].rolling(window=window, center=True).max()
+    )
+    df["Swing_Low"] = (
+        df["Low"] == df["Low"].rolling(window=window, center=True).min()
+    )
+
+    recent_lows = df[df["Swing_Low"]].tail(3)
+    recent_highs = df[df["Swing_High"]].tail(3)
+
+    wave_status = "Neutral"
+    if len(recent_lows) >= 2 and len(recent_highs) >= 2:
+      if (
+          recent_lows["Low"].iloc[-1] > recent_lows["Low"].iloc[-2]
+          and recent_highs["High"].iloc[-1] > recent_highs["High"].iloc[-2]
+      ):
+        wave_status = "Bullish Impulse (Wave 3 or 5 Phase)"
+      elif (
+          recent_lows["Low"].iloc[-1] < recent_lows["Low"].iloc[-2]
+          and recent_highs["High"].iloc[-1] < recent_highs["High"].iloc[-2]
+      ):
+        wave_status = "Bearish Correction / Impulsive Down"
+
+    return wave_status
+
+  def generate_report(self):
+    self.fetch_data()
+    self.apply_technical_analysis()
+    self.detect_smc_ict_elements()
+    wave_state = self.elliott_wave_approximation()
+
+    last_row = self.df.iloc[-1]
+    current_price = float(last_row["Close"])
+    atr = float(last_row["ATR"])
+    rsi = float(last_row["RSI"])
+    ema_50 = float(last_row["EMA_50"])
+    ema_200 = float(last_row["EMA_200"])
+
+    score = 0
+    reasons = []
+
+    if current_price > ema_50 > ema_200:
+      score += 2
+      reasons.append("اتجاه صاعد (EMA 50 > EMA 200)")
+    elif current_price < ema_50 < ema_200:
+      score -= 2
+      reasons.append("اتجاه هابط (EMA 50 < EMA 200)")
+
+    if rsi < 40:
+      score += 1
+      reasons.append(f"RSI في مناطق تشبع بيعي ({rsi:.1f})")
+    elif rsi > 60:
+      score -= 1
+      reasons.append(f"RSI في مناطق تشبع شرائي ({rsi:.1f})")
+
+    if last_row["FVG_Bullish"] or last_row["Order_Block_Buy"]:
+      score += 3
+      reasons.append("تم اكتشاف منطقة سيولة شرائية (Bullish OB / FVG - ICT/SMC)")
+    if last_row["FVG_Bearish"] or last_row["Order_Block_Sell"]:
+      score -= 3
+      reasons.append("تم اكتشاف منطقة سيولة بيعية (Bearish OB / FVG - ICT/SMC)")
+
+    reasons.append(f"حالة موجات أليوت: {wave_state}")
+    if "Bullish" in wave_state:
+      score += 2
+    elif "Bearish" in wave_state:
+      score -= 2
+
+    signal = "NEUTRAL (انتظار فرصة أوضح)"
+    entry_zone = [
+        round(current_price - (0.5 * atr), 2),
+        round(current_price + (0.5 * atr), 2),
+    ]
+    stop_loss = 0
+    take_profit_1 = 0
+    take_profit_2 = 0
+
+    if score >= 3:
+      signal = "BUY (شراء - فرصة قوية متوافقة)"
+      stop_loss = round(current_price - (1.5 * atr), 2)
+      take_profit_1 = round(current_price + (2.0 * atr), 2)
+      take_profit_2 = round(current_price + (3.5 * atr), 2)
+    elif score <= -3:
+      signal = "SELL (بيع - فرصة قوية متوافقة)"
+      stop_loss = round(current_price + (1.5 * atr), 2)
+      take_profit_1 = round(current_price - (2.0 * atr), 2)
+      take_profit_2 = round(current_price - (3.5 * atr), 2)
+
+    return {
+        "symbol": self.symbol,
+        "current_price": round(current_price, 2),
+        "signal": signal,
+        "total_score": score,
+        "strategy_levels": {
+            "entry_zone": entry_zone,
+            "stop_loss": stop_loss,
+            "take_profit_1": take_profit_1,
+            "take_profit_2": take_profit_2,
+        },
+        "indicators": {"rsi": round(rsi, 2), "atr": round(atr, 2)},
+        "reasons": reasons,
+    }
+
+
+@app.get("/")
+def home():
+  return {
+      "message": "مرحباً بك في نظام تحليل الذهب المتقدم (SMC, ICT, Elliott Wave)",
+      "docs_endpoint": "/docs",
+      "analyze_endpoint": "/analyze/gold",
+  }
+
+
+@app.get("/analyze/gold")
+def analyze_gold():
+  analyzer = AdvancedGoldAnalyzer(symbol="GC=F", period="60d", interval="1h")
+  return analyzer.generate_report()
