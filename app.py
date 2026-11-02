@@ -5,12 +5,91 @@ import pandas as pd
 import yfinance as yf
 
 app = FastAPI(
-    title="Institutional Multi-Strategy Supercomputer Engine",
-    version="3.0",
+    title="AI-Supervised Institutional Trading Engine",
+    version="4.0",
 )
 
 
-class MegaConfluenceAnalyzer:
+class AIStrategySupervisor:
+  """مشرف الذكاء الاصطناعي الذي يحلل كل إستراتيجية منفصلة ويصدر قرار الشراء/البيع المباشر"""
+
+  def __init__(self, df):
+    self.df = df
+
+  def analyze_smc(self):
+    last = self.df.iloc[-1]
+    ob_buy = last["Order_Block_Buy"]
+    ob_sell = last["Order_Block_Sell"]
+    if ob_buy:
+      return 1.0, "SMC Order Block الشرائي مفعل"
+    if ob_sell:
+      return -1.0, "SMC Order Block البيعي مفعل"
+    return (
+        0.2 if last["Close"] > last["EMA_50"] else -0.2
+    ), "SMC: سيولة الاتجاه الهيكلي"
+
+  def analyze_ict(self):
+    last = self.df.iloc[-1]
+    fvg_bull = last["FVG_Bullish"]
+    fvg_bear = last["FVG_Bearish"]
+    if fvg_bull:
+      return 1.0, "ICT Fair Value Gaps (FVG) شرائي"
+    if fvg_bear:
+      return -1.0, "ICT Fair Value Gaps (FVG) بيعي"
+    return (
+        0.3 if last["Close"] > last["EMA_21"] else -0.3
+    ), "ICT: تتبع نطاق السيولة"
+
+  def analyze_elliott(self):
+    recent_lows = self.df[self.df["Swing_Low"]].tail(3)
+    recent_highs = self.df[self.df["Swing_High"]].tail(3)
+    if len(recent_lows) >= 2 and len(recent_highs) >= 2:
+      if (
+          recent_lows["Low"].iloc[-1] > recent_lows["Low"].iloc[-2]
+          and recent_highs["High"].iloc[-1] > recent_highs["High"].iloc[-2]
+      ):
+        return 0.9, "Elliott Wave: الموجة الدافعة 3/5 صاعدة"
+      elif (
+          recent_lows["Low"].iloc[-1] < recent_lows["Low"].iloc[-2]
+          and recent_highs["High"].iloc[-1] < recent_highs["High"].iloc[-2]
+      ):
+        return -0.9, "Elliott Wave: دفق موجي تصحيحي هابط"
+    return 0.0, "Elliott Wave: مرحلة تجميع موجي"
+
+  def analyze_technical(self):
+    last = self.df.iloc[-1]
+    score = 0.0
+    if last["EMA_50"] > last["EMA_200"]:
+      score += 0.5
+    else:
+      score -= 0.5
+    if last["RSI"] < 40:
+      score += 0.5
+    elif last["RSI"] > 60:
+      score -= 0.5
+    return score, f"التحليل الفني (RSI: {last['RSI']:.1f})"
+
+  def evaluate_all(self):
+    smc_v, smc_msg = self.analyze_smc()
+    ict_v, ict_msg = self.analyze_ict()
+    elliott_v, elliott_msg = self.analyze_elliott()
+    tech_v, tech_msg = self.analyze_technical()
+
+    # أوزان الذكاء الاصطناعي المرجحة للحسم
+    weights = {"SMC": 0.35, "ICT": 0.30, "ELLIOTT": 0.20, "TECH": 0.15}
+
+    final_score = (
+        (smc_v * weights["SMC"])
+        + (ict_v * weights["ICT"])
+        + (elliott_v * weights["ELLIOTT"])
+        + (tech_v * weights["TECH"])
+    )
+
+    reasons = [smc_msg, ict_msg, elliott_msg, tech_msg]
+    return final_score, reasons
+
+
+class AbsoluteMarketAnalyzer:
 
   def __init__(self, symbol="GC=F", period="180d", interval="1h"):
     self.symbol = symbol
@@ -23,28 +102,22 @@ class MegaConfluenceAnalyzer:
     self.df = ticker.history(period=self.period, interval=self.interval)
     if self.df.empty:
       raise HTTPException(
-          status_code=500, detail="فشل في جلب بيانات السوق الحية."
+          status_code=500, detail="فشل في جلب البيانات من المصدر."
       )
     self.df = self.df[["Open", "High", "Low", "Close", "Volume"]].dropna()
 
-  def execute_massive_stratification(self):
-    """محاكاة تقييم أكثر من 1000 قاعدة تحليلية واختبار عكسي متقدم"""
+  def prepare_indicators(self):
     df = self.df
-
-    # 1. التحليل الكلاسيكي للزخم والاتجاه (أكثر من 200 مؤشر فرعي)
-    df["EMA_9"] = df["Close"].ewm(span=9, adjust=False).mean()
     df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
     df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
     df["EMA_200"] = df["Close"].ewm(span=200, adjust=False).mean()
 
-    # مؤشرات متعددة للزخم
     delta = df["Close"].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df["RSI"] = 100 - (100 / (1 + rs))
 
-    # نطاق ATR للتقلب
     high_low = df["High"] - df["Low"]
     high_close = np.abs(df["High"] - df["Close"].shift())
     low_close = np.abs(df["Low"] - df["Close"].shift())
@@ -53,14 +126,12 @@ class MegaConfluenceAnalyzer:
     )
     df["ATR"] = true_range.rolling(window=14).mean()
 
-    # 2. استراتيجيات السيولة المؤسسية SMC & ICT (أكثر من 500 قاعدة فحص هيكلي)
     df["FVG_Bullish"] = (df["Low"].shift(-1) > df["High"].shift(1)) & (
         df["Close"] > df["Open"]
     )
     df["FVG_Bearish"] = (df["High"].shift(-1) < df["Low"].shift(1)) & (
         df["Close"] < df["Open"]
     )
-
     df["Order_Block_Buy"] = (df["Close"].shift(1) < df["Open"].shift(1)) & (
         df["Close"] > df["Open"] * 1.001
     )
@@ -68,146 +139,43 @@ class MegaConfluenceAnalyzer:
         df["Close"] < df["Open"] * 0.999
     )
 
-    # هيكل الكسر السوقي (BOS / ChoCH)
-    df["Break_Of_Structure_Up"] = df["High"] > df["High"].rolling(
-        window=10
-    ).max().shift(1)
-    df["Break_Of_Structure_Down"] = df["Low"] < df["Low"].rolling(
-        window=10
-    ).min().shift(1)
-
-    # 3. محرك الاختبار العكسي التاريخي للتحقق من دقة النتائج
-    capital = 10000.0
-    position = 0
-    entry_price = 0.0
-    trades_won = 0
-    total_trades = 0
-
-    for i in range(200, len(df) - 1):
-      p = df["Close"].iloc[i]
-      atr_v = df["ATR"].iloc[i]
-      score = 0
-
-      if df["EMA_50"].iloc[i] > df["EMA_200"].iloc[i]:
-        score += 150
-      else:
-        score -= 150
-
-      if df["RSI"].iloc[i] < 45:
-        score += 100
-      elif df["RSI"].iloc[i] > 55:
-        score -= 100
-
-      if df["FVG_Bullish"].iloc[i] or df["Order_Block_Buy"].iloc[i]:
-        score += 300
-      if df["FVG_Bearish"].iloc[i] or df["Order_Block_Sell"].iloc[i]:
-        score -= 300
-
-      if position == 0:
-        if score >= 350:
-          position = 1
-          entry_price = p
-        elif score <= -350:
-          position = -1
-          entry_price = p
-      elif position == 1:
-        if p >= entry_price + (2.0 * atr_v) or p <= entry_price - (
-            1.5 * atr_v
-        ):
-          total_trades += 1
-          if p > entry_price:
-            trades_won += 1
-            capital *= 1.02
-          else:
-            capital *= 0.985
-          position = 0
-      elif position == -1:
-        if p <= entry_price - (2.0 * atr_v) or p >= entry_price + (
-            1.5 * atr_v
-        ):
-          total_trades += 1
-          if p < entry_price:
-            trades_won += 1
-            capital *= 1.02
-          else:
-            capital *= 0.985
-          position = 0
-
-    win_rate = (
-        round((trades_won / total_trades) * 100, 2) if total_trades > 0 else 58.4
+    window = 5
+    df["Swing_High"] = (
+        df["High"] == df["High"].rolling(window=window, center=True).max()
     )
-    return {
-        "final_capital": round(capital, 2),
-        "total_rules_evaluated": 1250,
-        "total_trades": max(total_trades, 142),
-        "win_rate": max(win_rate, 64.2),
-    }
+    df["Swing_Low"] = (
+        df["Low"] == df["Low"].rolling(window=window, center=True).min()
+    )
 
-  def generate_comprehensive_analysis(self):
+  def generate_analysis(self):
     self.fetch_data()
-    backtest = self.execute_massive_stratification()
+    self.prepare_indicators()
+
+    ai_supervisor = AIStrategySupervisor(self.df)
+    score, breakdown_reasons = ai_supervisor.evaluate_all()
 
     last = self.df.iloc[-1]
     price = float(last["Close"])
     atr = float(last["ATR"])
-    rsi = float(last["RSI"])
 
-    # حساب النقاط الإجمالية عبر مصفوفة الشروط الكبرى
-    score = 0
-    reasons = []
-
-    if last["EMA_50"] > last["EMA_200"]:
-      score += 400
-      reasons.append(
-          "تقاطع المتوسطات المؤسسية الكبرى يؤكد الهيكل الصاعد على المدى الطويل"
-      )
-    else:
-      score -= 400
-      reasons.append(
-          "تقاطع المتوسطات المؤسسية الكبرى يؤكد الهيكل الهابط على المدى الطويل"
-      )
-
-    if rsi < 40:
-      score += 250
-      reasons.append(f"مؤشر القوة النسبية يسجل تشبع بيعي عند مستوى {rsi:.1f}")
-    elif rsi > 60:
-      score -= 250
-      reasons.append(f"مؤشر القوة النسبية يسجل تشبع شرائي عند مستوى {rsi:.1f}")
-
-    if last["FVG_Bullish"] or last["Order_Block_Buy"]:
-      score += 600
-      reasons.append(
-          "تفعُل منطقة أوامر الشراء الفراغية وسيولة المؤسسات (SMC / ICT FVG)"
-      )
-    if last["FVG_Bearish"] or last["Order_Block_Sell"]:
-      score -= 600
-      reasons.append(
-          "تفعُل منطقة أوامر البيع الفراغية وسيولة المؤسسات (SMC / ICT FVG)"
-      )
-
-    signal = "NEUTRAL (منطقة حياد واستقرار هيكيلي)"
-    entry_zone = [
-        round(price - (0.4 * atr), 2),
-        round(price + (0.4 * atr), 2),
-    ]
-    stop_loss = 0.0
-    tp1 = 0.0
-    tp2 = 0.0
-
-    if score >= 500:
-      signal = "STRONG BUY (إجماع استراتيجي مكثف على الشراء)"
+    # قرار الحسم المباشر دون حياد مبهم
+    if score >= 0:
+      action = "BUY"
+      decision_title = "شراء (BUY) - إشارة صريحة من الذكاء الاصطناعي"
+      entry_level = round(price, 2)
       stop_loss = round(price - (1.5 * atr), 2)
-      tp1 = round(price + (2.2 * atr), 2)
-      tp2 = round(price + (4.0 * atr), 2)
-    elif score <= -500:
-      signal = "STRONG SELL (إجماع استراتيجي مكثف على البيع)"
+      tp1 = round(price + (2.0 * atr), 2)
+      tp2 = round(price + (3.8 * atr), 2)
+    else:
+      action = "SELL"
+      decision_title = "بيع (SELL) - إشارة صريحة من الذكاء الاصطناعي"
+      entry_level = round(price, 2)
       stop_loss = round(price + (1.5 * atr), 2)
-      tp1 = round(price - (2.2 * atr), 2)
-      tp2 = round(price - (4.0 * atr), 2)
+      tp1 = round(price - (2.0 * atr), 2)
+      tp2 = round(price - (3.8 * atr), 2)
 
-    # تجهيز بيانات الشارت لإرسالها للواجهة الرسومية
     chart_candles = []
-    for idx, row in self.df.tail(100).iterrows():
+    for idx, row in self.df.tail(120).iterrows():
       chart_candles.append({
           "time": int(idx.timestamp()),
           "open": float(row["Open"]),
@@ -218,17 +186,17 @@ class MegaConfluenceAnalyzer:
 
     return {
         "symbol": self.symbol,
-        "current_price": round(price, 2),
-        "signal": signal,
-        "aggregate_score": score,
+        "price": round(price, 2),
+        "action": action,
+        "decision_title": decision_title,
+        "ai_confidence_score": round(abs(score) * 100, 1),
         "levels": {
-            "entry_zone": entry_zone,
+            "entry": entry_level,
             "stop_loss": stop_loss,
             "tp1": tp1,
             "tp2": tp2,
         },
-        "backtest": backtest,
-        "reasons": reasons,
+        "breakdown": breakdown_reasons,
         "candles": chart_candles,
     }
 
@@ -240,130 +208,171 @@ def dashboard():
     <html lang="ar" dir="rtl">
     <head>
         <meta charset="UTF-8">
-        <title>منصة التحليل المؤسسي الشامل للأسواق</title>
+        <title>AI Institutional Black Chart Engine</title>
         <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
         <style>
-            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0b0e14; color: #d1d5db; margin: 0; padding: 15px; }
-            .container { max-width: 1200px; margin: auto; background: #131722; padding: 25px; border-radius: 10px; border: 1px solid #2a2e39; }
-            h1 { text-align: center; color: #2962ff; font-size: 22px; margin-bottom: 20px; }
-            .controls { display: flex; justify-content: center; gap: 10px; margin-bottom: 20px; }
-            button { background: #2962ff; color: white; border: none; padding: 10px 18px; border-radius: 5px; cursor: pointer; font-weight: bold; }
-            button:hover { background: #1e4bd8; }
-            .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
-            .card { background: #1e222d; border: 1px solid #2a2e39; padding: 15px; border-radius: 6px; margin-bottom: 15px; }
-            .label { color: #868993; font-size: 12px; }
-            .value { font-size: 16px; font-weight: bold; color: #f8fafc; margin-top: 4px; }
-            #chart-container { width: 100%; height: 450px; background: #131722; border-radius: 6px; }
-            ul { margin: 0; padding-right: 18px; font-size: 13px; }
-            li { margin-bottom: 6px; }
+            * { box-sizing: border-box; margin: 0; padding: 0; }
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; background-color: #000000; color: #ffffff; height: 100vh; overflow: hidden; }
+            .header { height: 60px; background: #0a0a0a; border-bottom: 1px solid #1a1a1a; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+            .title { font-size: 16px; font-weight: 700; color: #ffffff; letter-spacing: 0.5px; }
+            .btn-group { display: flex; gap: 8px; }
+            .btn { background: #121212; border: 1px solid #262626; color: #a3a3a3; padding: 8px 16px; border-radius: 4px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+            .btn:hover, .btn.active { background: #262626; color: #ffffff; border-color: #404040; }
+            .main-layout { display: flex; height: calc(100vh - 60px); }
+            .chart-box { flex: 1; height: 100%; background: #000000; position: relative; }
+            #chart { width: 100%; height: 100%; }
+            .sidebar { width: 320px; background: #050505; border-right: 1px solid #1a1a1a; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+            .status-card { background: #0a0a0a; border: 1px solid #1f1f1f; padding: 15px; border-radius: 6px; }
+            .badge-buy { background: #052e16; color: #4ade80; border: 1px solid #14532d; padding: 6px 12px; border-radius: 4px; font-weight: 700; font-size: 14px; text-align: center; }
+            .badge-sell { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; padding: 6px 12px; border-radius: 4px; font-weight: 700; font-size: 14px; text-align: center; }
+            .level-row { display: flex; justify-content: space-between; font-size: 13px; margin-top: 8px; padding-bottom: 4px; border-bottom: 1px solid #141414; }
+            .level-label { color: #737373; }
+            .level-val { font-weight: 600; font-family: monospace; }
+            .reasons-list { font-size: 12px; color: #a3a3a3; list-style: none; }
+            .reasons-list li { margin-bottom: 8px; padding-right: 10px; border-right: 2px solid #262626; }
         </style>
     </head>
     <body>
-        <div class="container">
-            <h1>منصة الخوارزميات الكبرى والتحليل المتقدم (1250+ قاعدة استراتيجية)</h1>
-            <div class="controls">
-                <button onclick="loadMarket('GC=F')">الذهب (Gold)</button>
-                <button onclick="loadMarket('CL=F')">البترول (Oil)</button>
-                <button onclick="loadMarket('BTC-USD')">البيتكوين (Bitcoin)</button>
+        <div class="header">
+            <div class="title">AI INSTINCT TRADING ENGINE</div>
+            <div class="btn-group">
+                <button class="btn active" id="btn-GC=F" onclick="changeAsset('GC=F')">GOLD</button>
+                <button class="btn" id="btn-CL=F" onclick="changeAsset('CL=F')">OIL</button>
+                <button class="btn" id="btn-BTC-USD" onclick="changeAsset('BTC-USD')">BITCOIN</button>
             </div>
+        </div>
 
-            <div class="grid">
-                <div>
-                    <div class="card">
-                        <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
-                            <div>
-                                <span class="label">الأصل الحالي:</span> <span id="lbl-symbol" style="font-weight:bold; color:#2962ff;">--</span>
-                            </div>
-                            <div>
-                                <span class="label">السعر:</span> <span id="lbl-price" style="font-weight:bold;">--</span> USD
-                            </div>
-                        </div>
-                        <div id="chart-container"></div>
-                    </div>
+        <div class="main-layout">
+            <div class="sidebar">
+                <div class="status-card">
+                    <div style="font-size: 11px; color: #737373; margin-bottom: 5px;">قرار الذكاء الاصطناعي والمشرف</div>
+                    <div id="badge-action" class="badge-buy">LOADING...</div>
+                    <div style="font-size: 12px; color: #a3a3a3; margin-top: 8px; text-align: center;">ثقة النموذج: <span id="val-confidence">0</span>%</div>
                 </div>
 
-                <div>
-                    <div class="card">
-                        <div class="label">قرار الإجماع الاستراتيجي</div>
-                        <div id="lbl-signal" class="value" style="font-size:15px; color:#2962ff;">جاري التحليل...</div>
-                    </div>
+                <div class="status-card">
+                    <div style="font-size: 11px; color: #737373; margin-bottom: 10px;">المستويات المرسومة على الشارت</div>
+                    <div class="level-row"><span class="level-label">الدخول المرتقب</span><span id="val-entry" class="level-val" style="color:#38bdf8;">0.00</span></div>
+                    <div class="level-row"><span class="level-label">وقف الخسارة (SL)</span><span id="val-sl" class="level-val" style="color:#f87171;">0.00</span></div>
+                    <div class="level-row"><span class="level-label">الهدف الأول (TP1)</span><span id="val-tp1" class="level-val" style="color:#4ade80;">0.00</span></div>
+                    <div class="level-row"><span class="level-label">الهدف الثاني (TP2)</span><span id="val-tp2" class="level-val" style="color:#4ade80;">0.00</span></div>
+                </div>
 
-                    <div class="card">
-                        <h3>مستويات التنفيذ المباشرة</h3>
-                        <div class="label">منطقة الدخول الموصى بها</div>
-                        <div id="lbl-entry" class="value">--</div>
-                        <div class="label" style="margin-top:8px;">وقف الخسارة</div>
-                        <div id="lbl-sl" class="value" style="color:#ef5350;">--</div>
-                        <div class="label" style="margin-top:8px;">الأهداف (TP1 / TP2)</div>
-                        <div id="lbl-tp" class="value" style="color:#26a69a;">--</div>
-                    </div>
-
-                    <div class="card">
-                        <h3>نتائج الفحص الشامل والاختبار العكسي</h3>
-                        <div class="label">عدد القواعد المُختبرة</div>
-                        <div class="value">1250 قاعدة مؤسسية متوازية</div>
-                        <div class="label" style="margin-top:8px;">نسبة النجاح التاريخية (Win Rate)</div>
-                        <div id="lbl-winrate" class="value" style="color:#26a69a;">--</div>
-                        <div class="label" style="margin-top:8px;">إجمالي الصفقات المُحاكات</div>
-                        <div id="lbl-trades" class="value">--</div>
-                    </div>
+                <div class="status-card" style="flex:1; overflow-y:auto;">
+                    <div style="font-size: 11px; color: #737373; margin-bottom: 10px;">فحص الاستراتيجيات المزدوجة</div>
+                    <ul id="reasons-box" class="reasons-list"></ul>
                 </div>
             </div>
 
-            <div class="card">
-                <h3>المبررات الفنية والتحليلية المدمجة</h3>
-                <ul id="list-reasons">
-                    <li>يرجى اختيار الأصل لبيان التحليلات...</li>
-                </ul>
+            <div class="chart-box">
+                <div id="chart"></div>
             </div>
         </div>
 
         <script>
             let chart;
-            let candlestickSeries;
+            let candleSeries;
+            let currentPriceLines = [];
 
             function initChart() {
-                const container = document.getElementById('chart-container');
+                const container = document.getElementById('chart');
                 chart = LightweightCharts.createChart(container, {
-                    layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d5db' },
-                    grid: { vertLines: { color: '#2a2e39' }, horzLines: { color: '#2a2e39' } },
-                    timeScale: { timeVisible: true, secondsVisible: false },
+                    layout: { background: { type: 'solid', color: '#000000' }, textColor: '#737373' },
+                    grid: { vertLines: { color: '#0f0f0f' }, horzLines: { color: '#0f0f0f' } },
+                    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+                    priceScale: { borderColor: '#1f1f1f' },
+                    timeScale: { borderColor: '#1f1f1f', timeVisible: true }
                 });
-                candlestickSeries = chart.addCandlestickSeries({
-                    upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
-                    wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+
+                candleSeries = chart.addCandlestickSeries({
+                    upColor: '#22c55e', downColor: '#ef4444', borderVisible: false,
+                    wickUpColor: '#22c55e', wickDownColor: '#ef4444'
+                });
+
+                window.addEventListener('resize', () => {
+                    chart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
                 });
             }
 
-            async function loadMarket(symbol) {
-                if(!chart) initChart();
+            function clearPriceLines() {
+                currentPriceLines.forEach(line => candleSeries.removePriceLine(line));
+                currentPriceLines = [];
+            }
+
+            async function changeAsset(symbol) {
+                document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+                document.getElementById('btn-' + symbol).classList.add('active');
+                
+                if (!chart) initChart();
+                clearPriceLines();
+
                 try {
                     let res = await fetch('/analyze/' + symbol);
                     let data = await res.json();
 
-                    document.getElementById('lbl-symbol').innerText = data.symbol;
-                    document.getElementById('lbl-price').innerText = data.current_price;
-                    document.getElementById('lbl-signal').innerText = data.signal;
-                    document.getElementById('lbl-entry').innerText = data.levels.entry_zone[0] + ' الى ' + data.levels.entry_zone[1];
-                    document.getElementById('lbl-sl').innerText = data.levels.stop_loss;
-                    document.getElementById('lbl-tp').innerText = data.levels.tp1 + ' / ' + data.levels.tp2;
-                    document.getElementById('lbl-winrate').innerText = data.backtest.win_rate + '%';
-                    document.getElementById('lbl-trades').innerText = data.backtest.total_trades + ' صفقة';
+                    candleSeries.setData(data.candles);
 
-                    let reasonsHtml = '';
-                    data.reasons.forEach(r => { reasonsHtml += `<li>${r}</li>`; });
-                    document.getElementById('list-reasons').innerHTML = reasonsHtml;
+                    // تحديث واجهة الإشارات
+                    const badge = document.getElementById('badge-action');
+                    badge.innerText = data.action === 'BUY' ? 'إشارة شراء (BUY)' : 'إشارة بيع (SELL)';
+                    badge.className = data.action === 'BUY' ? 'badge-buy' : 'badge-sell';
 
-                    candlestickSeries.setData(data.candles);
+                    document.getElementById('val-confidence').innerText = data.ai_confidence_score;
+                    document.getElementById('val-entry').innerText = data.levels.entry;
+                    document.getElementById('val-sl').innerText = data.levels.stop_loss;
+                    document.getElementById('val-tp1').innerText = data.levels.tp1;
+                    document.getElementById('val-tp2').innerText = data.levels.tp2;
 
-                    // إضافة خطوط مرئية مباشرة على الشارت للمستويات
+                    let listHtml = '';
+                    data.breakdown.forEach(item => { listHtml += `<li>${item}</li>`; });
+                    document.getElementById('reasons-box').innerHTML = listHtml;
+
+                    // رسم مستويات الدخول والأهداف مباشرة على الشارت
+                    const entryLine = candleSeries.createPriceLine({
+                        price: data.levels.entry,
+                        color: '#38bdf8',
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Solid,
+                        axisLabelVisible: true,
+                        title: 'ENTRY (منطقة الدخول)',
+                    });
+                    
+                    const slLine = candleSeries.createPriceLine({
+                        price: data.levels.stop_loss,
+                        color: '#f87171',
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Dashed,
+                        axisLabelVisible: true,
+                        title: 'STOP LOSS',
+                    });
+
+                    const tp1Line = candleSeries.createPriceLine({
+                        price: data.levels.tp1,
+                        color: '#4ade80',
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Dashed,
+                        axisLabelVisible: true,
+                        title: 'TARGET 1',
+                    });
+
+                    const tp2Line = candleSeries.createPriceLine({
+                        price: data.levels.tp2,
+                        color: '#22c55e',
+                        lineWidth: 2,
+                        lineStyle: LightweightCharts.LineStyle.Dotted,
+                        axisLabelVisible: true,
+                        title: 'TARGET 2',
+                    });
+
+                    currentPriceLines.push(entryLine, slLine, tp1Line, tp2Line);
                     chart.timeScale().fitContent();
-                } catch(e) {
-                    console.error(e);
+
+                } catch (err) {
+                    console.error("Error loading asset data", err);
                 }
             }
 
-            window.onload = () => { loadMarket('GC=F'); };
+            window.onload = () => { changeAsset('GC=F'); };
         </script>
     </body>
     </html>
@@ -373,7 +382,7 @@ def dashboard():
 
 @app.get("/analyze/{symbol}")
 def analyze(symbol: str):
-  analyzer = MegaConfluenceAnalyzer(
+  analyzer = AbsoluteMarketAnalyzer(
       symbol=symbol, period="180d", interval="1h"
   )
-  return analyzer.generate_comprehensive_analysis()
+  return analyzer.generate_analysis()
