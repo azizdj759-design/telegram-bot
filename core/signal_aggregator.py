@@ -33,6 +33,13 @@ class SignalAggregator:
         reward = abs(take_profit - entry) if take_profit else 0
         rr = round(reward / risk, 2) if risk > 0 else 0
 
+        # حساب نسبة النجاح التقريبية (Win Rate Score)
+        # كلما زاد عدد الاستراتيجيات المتفقة وكانت نسبة RR جيدة، زادت النسبة
+        win_rate = 50 + (len(signals) * 15) # قاعدة أساسية
+        if rr >= 2: win_rate += 10
+        if rr >= 3: win_rate += 5
+        win_rate = min(95, win_rate) # سقف 95%
+
         return {
             "decision": "شراء" if direction == "bullish" else "بيع",
             "direction": direction,
@@ -40,6 +47,7 @@ class SignalAggregator:
             "stop_loss": round(stop_loss, 4),
             "take_profit": round(take_profit, 4) if take_profit else None,
             "risk_reward": rr,
+            "win_rate": win_rate,
             "confluence_count": len(signals),
             "confluence_strategies": [s["strategy"] for s in signals],
             "details": signals,
@@ -47,4 +55,5 @@ class SignalAggregator:
 
     def _no_trade(self, reason):
         return {"decision": "انتظار", "direction": "neutral", "reason": reason,
-                "entry": None, "stop_loss": None, "take_profit": None, "details": []}
+                "entry": None, "stop_loss": None, "take_profit": None,
+                "win_rate": 0, "details": []}
