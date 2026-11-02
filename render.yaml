@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: ai-instinct-trading-engine
+    name: ultimate-ai-trading-engine
     env: docker
     region: oregon
     plan: free
