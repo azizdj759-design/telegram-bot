@@ -7,4 +7,4 @@ pyvsmc>=0.3.4
 plotly>=5.24.0
 yfinance>=0.2.40
 streamlit-autorefresh>=1.0.1
-streamlit-lightweight-charts-v5>=0.1.0
+streamlit-lightweight-charts-pro>=0.1.0
