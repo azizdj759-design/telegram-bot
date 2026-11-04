@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: advanced-ai-gateway
+    name: real-time-institutional-engine
     env: docker
     region: oregon
     plan: free
