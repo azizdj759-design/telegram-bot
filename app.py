@@ -3,30 +3,65 @@ from fastapi.responses import HTMLResponse
 import numpy as np
 import pandas as pd
 import math
+import httpx
+import asyncio
 from datetime import datetime, timedelta
 
-app = FastAPI(title="Pro Signal Engine - Multi-Timeframe", version="27.1")
+app = FastAPI(title="Pro Signal Engine - Exness & Telegram", version="28.0")
+
+# إعدادات التلغرام
+TELEGRAM_TOKEN = "8741070555:AAGf6ys8UH8TZwlQpy_vWff9YONZ9BDmOok"
+TELEGRAM_CHAT_ID = None # سيتم جلبه تلقائياً
+
+async def get_chat_id():
+    global TELEGRAM_CHAT_ID
+    if TELEGRAM_CHAT_ID: return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url)
+            data = res.json()
+            if data.get("ok") and data.get("result"):
+                # أخذ آخر رسالة تم إرسالها للبوت
+                TELEGRAM_CHAT_ID = data["result"][-1]["message"]["chat"]["id"]
+                print(f"✅ تم ربط التلغرام بنجاح! Chat ID: {TELEGRAM_CHAT_ID}")
+    except Exception as e:
+        print(f"Telegram Error: {e}")
+
+async def send_telegram_message(message: str):
+    if not TELEGRAM_CHAT_ID:
+        await get_chat_id()
+    if not TELEGRAM_CHAT_ID: return
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    async with httpx.AsyncClient() as client:
+        await client.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"})
 
 engines = {}
 
 class MarketSimulator:
     def __init__(self, symbol, balance=30.0, risk_usd=5.0):
         self.symbol = symbol
-        self.balance = balance
         self.risk_usd = risk_usd
+        self.tick_count = 0
+        self.active_trade = None # لتتبع الصفقات المفتوحة
+        self.last_action = "WAIT"
         
+        # إعدادات الأصول (محاكاة Exness)
         if symbol == "BTCUSDT":
-            self.base_price = 65000.0
-            self.volatility = 150.0
+            self.base_price, self.volatility, self.decimals = 65000.0, 150.0, 2
+        elif symbol == "ETHUSDT":
+            self.base_price, self.volatility, self.decimals = 3500.0, 15.0, 2
         elif symbol == "XAUUSD":
-            self.base_price = 2350.0
-            self.volatility = 4.0
+            self.base_price, self.volatility, self.decimals = 2350.0, 4.0, 2
         elif symbol == "EURUSD":
-            self.base_price = 1.0850
-            self.volatility = 0.0015
+            self.base_price, self.volatility, self.decimals = 1.08500, 0.0015, 5
+        elif symbol == "GBPUSD":
+            self.base_price, self.volatility, self.decimals = 1.27000, 0.0018, 5
+        elif symbol == "USDJPY":
+            self.base_price, self.volatility, self.decimals = 155.000, 0.25, 3
         else: # WTIUSD (Oil)
-            self.base_price = 78.0
-            self.volatility = 0.8
+            self.base_price, self.volatility, self.decimals = 78.0, 0.8, 2
 
         self.current_price = self.base_price
         self.df_15m = self._generate_historical_data(1000)
@@ -34,7 +69,6 @@ class MarketSimulator:
     def _generate_historical_data(self, length):
         dates = [datetime.now() - timedelta(minutes=15*i) for i in range(length)]
         dates.reverse()
-        
         prices = [self.base_price]
         for _ in range(length - 1):
             change = np.random.normal(0, self.volatility)
@@ -49,35 +83,44 @@ class MarketSimulator:
         return df
 
     def update_live_tick(self):
+        self.tick_count += 1
         change = np.random.normal(0, self.volatility * 0.2)
         self.current_price += change
+        
         self.df_15m.iloc[-1, self.df_15m.columns.get_loc('Close')] = self.current_price
         self.df_15m.iloc[-1, self.df_15m.columns.get_loc('High')] = max(self.df_15m.iloc[-1]['High'], self.current_price)
         self.df_15m.iloc[-1, self.df_15m.columns.get_loc('Low')] = min(self.df_15m.iloc[-1]['Low'], self.current_price)
+        
+        # إنشاء شمعة جديدة كل 10 تحديثات (20 ثانية)
+        if self.tick_count >= 10:
+            self.tick_count = 0
+            new_time = self.df_15m.index[-1] + timedelta(minutes=15)
+            new_row = pd.DataFrame({
+                'Open': [self.current_price], 'High': [self.current_price],
+                'Low': [self.current_price], 'Close': [self.current_price],
+                'Volume': [np.random.uniform(1000, 5000)]
+            }, index=[new_time])
+            self.df_15m = pd.concat([self.df_15m, new_row]).tail(1000)
 
     def _add_indicators(self, df):
         df = df.copy()
         df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
         df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
         df["EMA_200"] = df["Close"].ewm(span=200, adjust=False).mean()
-        
         delta = df["Close"].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         df["RSI"] = 100 - (100 / (1 + (gain / loss)))
-        
         high_low = df["High"] - df["Low"]
         high_close = np.abs(df["High"] - df["Close"].shift())
         low_close = np.abs(df["Low"] - df["Close"].shift())
         df["ATR"] = (pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)).rolling(14).mean()
-
         df["Swing_High"] = df["High"] == df["High"].rolling(5).max()
         df["Swing_Low"] = df["Low"] == df["Low"].rolling(5).min()
         return df
 
     def analyze(self):
         df_15m = self._add_indicators(self.df_15m)
-        
         df_1h = self.df_15m.resample('1h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
         df_1h = self._add_indicators(df_1h)
 
@@ -90,7 +133,6 @@ class MarketSimulator:
 
         last_swing_high = df_15m[df_15m["Swing_High"]]["High"].iloc[-1] if not df_15m[df_15m["Swing_High"]].empty else 0
         last_swing_low = df_15m[df_15m["Swing_Low"]]["Low"].iloc[-1] if not df_15m[df_15m["Swing_Low"]].empty else 0
-
         fvg_bull = df_15m["Low"] > df_15m["High"].shift(2)
         fvg_bear = df_15m["High"] < df_15m["Low"].shift(2)
 
@@ -137,11 +179,11 @@ class MarketSimulator:
         elif htf_trend == "BEARISH" and total_score <= -3.0:
             action = "SELL"
 
+        def clean(v): return 0.0 if pd.isna(v) or math.isinf(v) else round(float(v), self.decimals)
+
         sl_dist = 1.5 * atr
         position_size, entry, sl, tp, warning_msg = 0, 0, 0, 0, ""
         
-        def clean(v): return 0.0 if pd.isna(v) or math.isinf(v) else round(float(v), 5 if self.symbol == "EURUSD" else 2)
-
         if action != "WAIT" and sl_dist > 0:
             entry = clean(price)
             sl = clean(entry - sl_dist if action == "BUY" else entry + sl_dist)
@@ -150,15 +192,48 @@ class MarketSimulator:
             if position_size < 0.0001:
                 warning_msg = "⚠️ حجم اللوت صغير جداً!"
 
-        # زيادة عدد الشموع المرسلة إلى 300
-        candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df_15m.tail(300).iterrows()]
+        # --- نظام إشعارات التلغرام ومراقبة الصفقات ---
+        if action != "WAIT" and action != self.last_action:
+            # إشارة جديدة
+            self.active_trade = {"action": action, "entry": entry, "sl": sl, "tp": tp}
+            msg = f"🚀 <b>إشارة جديدة: {self.symbol}</b>\n\n"
+            msg += f"الاتجاه: {action}\n"
+            msg += f"سعر الدخول: {entry}\n"
+            msg += f"وقف الخسارة (SL): {sl}\n"
+            msg += f"الهدف (TP): {tp}\n"
+            msg += f"حجم المركز: {position_size}\n"
+            msg += f"الخسارة القصوى: $5.00"
+            asyncio.create_task(send_telegram_message(msg))
+
+        self.last_action = action
+
+        # مراقبة الصفقة الحالية (هل ضربت الهدف أو الخسارة؟)
+        if self.active_trade:
+            t = self.active_trade
+            if t["action"] == "BUY":
+                if price >= t["tp"]:
+                    asyncio.create_task(send_telegram_message(f"✅ <b>تم تحقيق الهدف ({self.symbol})</b>\nربح: +$15.00"))
+                    self.active_trade = None
+                elif price <= t["sl"]:
+                    asyncio.create_task(send_telegram_message(f"❌ <b>تم ضرب وقف الخسارة ({self.symbol})</b>\nخسارة: -$5.00"))
+                    self.active_trade = None
+            elif t["action"] == "SELL":
+                if price <= t["tp"]:
+                    asyncio.create_task(send_telegram_message(f"✅ <b>تم تحقيق الهدف ({self.symbol})</b>\nربح: +$15.00"))
+                    self.active_trade = None
+                elif price >= t["sl"]:
+                    asyncio.create_task(send_telegram_message(f"❌ <b>تم ضرب وقف الخسارة ({self.symbol})</b>\nخسارة: -$5.00"))
+                    self.active_trade = None
+
+        # إرسال 500 شمعة ليتحلل الشارت بشكل أفضل
+        candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df_15m.tail(500).iterrows()]
 
         return {
             "status": "ok", "current_price": clean(price), "action": action, "htf_trend": htf_trend,
             "levels": {"entry": entry, "sl": sl, "tp": tp},
             "position_size": position_size, "warning": warning_msg, 
             "strategies": list(strategies.values()), "candles": candles,
-            "source": "MTF Simulator (Safe)"
+            "source": "MTF Simulator (Exness)"
         }
 
 @app.get("/health")
@@ -166,7 +241,7 @@ def health_check():
     return {"status": "alive"}
 
 @app.get("/api/data/{symbol}")
-def get_data(symbol: str):
+async def get_data(symbol: str):
     if symbol not in engines:
         engines[symbol] = MarketSimulator(symbol=symbol)
     
@@ -181,7 +256,7 @@ def home():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Pro Signal Engine - MTF</title>
+        <title>Pro Signal Engine - Exness</title>
         <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
         <style>
             * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -206,32 +281,34 @@ def home():
             .source-tag { font-size: 9px; color: #666; text-align: center; margin-top: 4px; }
             .chart-wrap { flex: 1; background: #000; position: relative; }
             #chart { width: 100%; height: 100%; }
-            /* تعديلات الهاتف لزيادة مساحة الشارت */
+            
+            /* تعديلات الهاتف: تكبير الشارت لـ 65% */
             @media (max-width: 768px) {
                 .layout { flex-direction: column; }
-                .panel { width: 100%; border-left: none; border-bottom: 1px solid #121212; height: 40%; } /* تصغير اللوحة */
-                .chart-wrap { height: 60%; } /* تكبير الشارت */
+                .panel { width: 100%; border-left: none; border-bottom: 1px solid #121212; height: 35%; } 
+                .chart-wrap { height: 65%; } 
             }
         </style>
     </head>
     <body>
         <div class="header">
-            <div class="brand">PRO MTF ($5 Risk)</div>
+            <div class="brand">EXNESS SIM ($5 Risk)</div>
             <div class="menu">
                 <button class="m-btn" id="btn-EURUSD" onclick="switchSymbol('EURUSD')">EUR/USD</button>
+                <button class="m-btn" id="btn-GBPUSD" onclick="switchSymbol('GBPUSD')">GBP/USD</button>
                 <button class="m-btn" id="btn-XAUUSD" onclick="switchSymbol('XAUUSD')">GOLD</button>
-                <button class="m-btn" id="btn-WTIUSD" onclick="switchSymbol('WTIUSD')">OIL</button>
-                <button class="m-btn active" id="btn-BTCUSDT" onclick="switchSymbol('BTCUSDT')">BITCOIN</button>
+                <button class="m-btn" id="btn-ETHUSDT" onclick="switchSymbol('ETHUSDT')">ETH</button>
+                <button class="m-btn active" id="btn-BTCUSDT" onclick="switchSymbol('BTCUSDT')">BTC</button>
             </div>
         </div>
         <div class="layout">
             <div class="panel">
                 <div class="box" style="text-align:center;">
-                    <div style="font-size:10px; color:#888; margin-bottom:4px;">إشارة التداول (15 دقيقة)</div>
+                    <div style="font-size:10px; color:#888; margin-bottom:4px;">إشارة التداول</div>
                     <div id="signal-badge" class="badge-wait">جاري التحميل...</div>
                     
                     <div style="margin-top:8px; font-size:11px; color:#aaa; display:flex; justify-content:center; gap:10px;">
-                        <div>الاتجاه (1H): <span id="htf-trend">-</span></div>
+                        <div>الاتجاه: <span id="htf-trend">-</span></div>
                         <div>|</div>
                         <div>الخسارة: <span style="color:#38bdf8;">$5.00</span></div>
                     </div>
@@ -250,7 +327,7 @@ def home():
                     <div class="row"><span class="lbl">الهدف</span><span id="p-tp" class="val" style="color:#4ade80;">0.00</span></div>
                 </div>
                 <div class="box" style="flex:1;">
-                    <div style="font-size:10px; color:#888; margin-bottom:4px;">تلاقي الاستراتيجيات</div>
+                    <div style="font-size:10px; color:#888; margin-bottom:4px;">الاستراتيجيات</div>
                     <div id="strategies-container"></div>
                 </div>
             </div>
@@ -278,10 +355,6 @@ def home():
                     .then(res => res.json())
                     .then(data => {
                         series.setData(data.candles);
-                        
-                        // هذا السطر هو السر: يجعل الشارت يتكيف مع الحجم ويعرض كل الشموع
-                        chart.timeScale().fitContent(); 
-                        
                         clearLines();
                         
                         const badge = document.getElementById('signal-badge');
@@ -327,6 +400,10 @@ def home():
                 
                 if (intervalId) clearInterval(intervalId);
                 fetchData();
+                
+                // إجبار الشارت على التكيف مع حجم البيانات الجديد
+                setTimeout(() => chart.timeScale().fitContent(), 100);
+                
                 intervalId = setInterval(fetchData, 2000); 
             }
 
