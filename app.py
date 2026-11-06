@@ -7,7 +7,7 @@ import httpx
 import asyncio
 from datetime import datetime, timedelta
 
-app = FastAPI(title="Ultimate Pro Signal Engine", version="37.0")
+app = FastAPI(title="Ultimate Pro Signal Engine", version="38.0")
 
 TELEGRAM_TOKEN = "8741070555:AAGf6ys8UH8TZwlQpy_vWff9YONZ9BDmOok"
 
@@ -45,14 +45,11 @@ async def send_telegram_message(message: str):
 engines = {}
 
 class MarketSimulator:
-    def __init__(self, symbol, balance=30.0, risk_usd=5.0):
+    def __init__(self, symbol):
         self.symbol = symbol
-        self.risk_usd = risk_usd
         self.tick_count = 0
-        self.active_trade = None # لحفظ الصفقة المفتوحة
-        self.last_action = "WAIT"
+        self.active_trade = None 
         
-        # الأسعار الأساسية (محاكاة)
         if symbol == "BTCUSDT": self.base_price, self.volatility, self.decimals = 65000.0, 150.0, 2
         elif symbol == "ETHUSDT": self.base_price, self.volatility, self.decimals = 3500.0, 15.0, 2
         elif symbol == "SOLUSDT": self.base_price, self.volatility, self.decimals = 150.0, 2.5, 2
@@ -129,6 +126,47 @@ class MarketSimulator:
         df["Swing_High"] = df["High"] == df["High"].rolling(7, center=True).max()
         df["Swing_Low"] = df["Low"] == df["Low"].rolling(7, center=True).min()
         return df
+
+    def calculate_pnl_and_pips(self, sl_dist, tp_dist):
+        """حساب النقاط (Pips) وقيمة الخسارة/الربح بالدولار لحجم 0.01 لوت"""
+        lot_size = 0.01
+        
+        if self.symbol in ["EURUSD", "GBPUSD", "AUDUSD", "USDCAD"]:
+            # أزواج الفوركس (4 خانات عشرية): النقطة = 0.0001. قيمة النقطة لـ 0.01 لوت = $0.10
+            sl_pips = round(sl_dist / 0.0001)
+            tp_pips = round(tp_dist / 0.0001)
+            loss_usd = sl_pips * 0.10
+            profit_usd = tp_pips * 0.10
+            
+        elif self.symbol == "USDJPY":
+            # أزواج الين: النقطة = 0.01
+            sl_pips = round(sl_dist / 0.01)
+            tp_pips = round(tp_dist / 0.01)
+            loss_usd = sl_pips * 0.10
+            profit_usd = tp_pips * 0.10
+            
+        elif self.symbol == "XAUUSD":
+            # الذهب: حركة 0.1 نقطة. لـ 0.01 لوت، حركة دولار واحد = ربح/خسارة 1 دولار
+            sl_pips = round(sl_dist * 10)
+            tp_pips = round(tp_dist * 10)
+            loss_usd = sl_dist * 1.0  # 1 دولار حركة سعرية = 1 دولار خسارة
+            profit_usd = tp_dist * 1.0
+            
+        elif self.symbol == "XAGUSD":
+            # الفضة: حركة 0.01 نقطة. لـ 0.01 لوت، حركة 1 سنت = $0.50
+            sl_pips = round(sl_dist * 100)
+            tp_pips = round(tp_dist * 100)
+            loss_usd = sl_dist * 50.0
+            profit_usd = tp_dist * 50.0
+            
+        else:
+            # الكريبتو (مباشر بالدولار)
+            sl_pips = "---" # لا ينطبق
+            tp_pips = "---"
+            loss_usd = sl_dist * lot_size
+            profit_usd = tp_dist * lot_size
+
+        return sl_pips, tp_pips, round(loss_usd, 2), round(profit_usd, 2)
 
     def analyze(self):
         df_15m = self._add_indicators(self.df_15m)
@@ -239,7 +277,6 @@ class MarketSimulator:
         action = "WAIT"
         reason = "لا توجد صفقة نشطة حالياً. الشروط غير مكتملة."
         
-        # إذا كانت هناك صفقة مفتوحة، لا نبحث عن صفقة جديدة
         if self.active_trade is None:
             if htf_trend == "BULLISH" and total_score >= 3.5:
                 action = "BUY"
@@ -250,21 +287,19 @@ class MarketSimulator:
 
         def clean(v): return 0.0 if pd.isna(v) or math.isinf(v) else round(float(v), self.decimals)
 
+        # حساب مسافات ATR
         sl_dist = 1.5 * atr
-        position_size, entry, sl, tp, warning_msg = 0, 0, 0, 0, ""
+        tp_dist = 3.0 * atr
+        
+        # حساب النقاط والدولار (بناءً على حجم 0.01 لوت)
+        sl_pips, tp_pips, loss_usd, profit_usd = self.calculate_pnl_and_pips(sl_dist, tp_dist)
+
+        entry, sl, tp = 0, 0, 0
         
         if action != "WAIT" and sl_dist > 0:
             entry = clean(price)
             sl = clean(entry - sl_dist if action == "BUY" else entry + sl_dist)
-            tp = clean(entry + (3.0 * atr) if action == "BUY" else entry - (3.0 * atr))
-            
-            if "USD" in self.symbol and "USDT" not in self.symbol: 
-                position_size = round((self.risk_usd / sl_dist) / 100000, 2) 
-            else:
-                position_size = round(self.risk_usd / sl_dist, 4)
-
-            if position_size < 0.01 and "USD" in self.symbol:
-                warning_msg = "⚠️ حجم اللوت صغير جداً! قد يرفضه البروكر."
+            tp = clean(entry + tp_dist if action == "BUY" else entry - tp_dist)
 
         # --- إرسال الإشعار إذا كانت إشارة جديدة ---
         if action != "WAIT":
@@ -272,42 +307,47 @@ class MarketSimulator:
             msg = f"🚀 <b>إشارة مؤسسية: {self.symbol}</b>\n\n"
             msg += f"الاتجاه: {action}\n"
             msg += f"سعر الدخول: {entry}\n"
-            msg += f"وقف الخسارة (SL): {sl}\n"
-            msg += f"الهدف (TP): {tp}\n"
-            msg += f"<b>حجم اللوت: {position_size} Lots</b>\n"
-            msg += f"الخسارة القصوى: $5.00\n\n"
-            msg += f"<b>ملاحظة هامة:</b> هذه إشارة من محاكي، طابق الاتجاه والأرقام مع منصتك.\n\n"
+            
+            msg += f"<b>وقف الخسارة (SL):</b> {sl}\n"
+            msg += f"<i>(خسارة: {loss_usd}$ | {sl_pips} Pips على 0.01 لوت)</i>\n"
+            
+            msg += f"<b>الهدف (TP):</b> {tp}\n"
+            msg += f"<i>(ربح: {profit_usd}$ | {tp_pips} Pips على 0.01 لوت)</i>\n\n"
+            
             msg += f"<b>سبب الدخول:</b>\n{reason}\n"
             msg += f"• SMC: {smc_status}\n"
             msg += f"• ICT: {ict_status}\n"
             msg += f"• الدايفرجنس: {div_status}"
             asyncio.create_task(send_telegram_message(msg))
 
-        # --- مراقبة الصفقة المفتوحة (هل ضربت الهدف أو الخسارة؟) ---
+        # --- مراقبة الصفقة المفتوحة ---
         if self.active_trade:
             t = self.active_trade
             if t["action"] == "BUY":
                 if price >= t["tp"]:
-                    asyncio.create_task(send_telegram_message(f"✅ <b>تم تحقيق الهدف ({self.symbol})</b>\nربح: +$15.00"))
+                    asyncio.create_task(send_telegram_message(f"✅ <b>تم تحقيق الهدف ({self.symbol})</b>\nربح: +${profit_usd}"))
                     self.active_trade = None
                 elif price <= t["sl"]:
-                    asyncio.create_task(send_telegram_message(f"❌ <b>تم ضرب وقف الخسارة ({self.symbol})</b>\nخسارة: -$5.00"))
+                    asyncio.create_task(send_telegram_message(f"❌ <b>تم ضرب وقف الخسارة ({self.symbol})</b>\nخسارة: -${loss_usd}"))
                     self.active_trade = None
             elif t["action"] == "SELL":
                 if price <= t["tp"]:
-                    asyncio.create_task(send_telegram_message(f"✅ <b>تم تحقيق الهدف ({self.symbol})</b>\nربح: +$15.00"))
+                    asyncio.create_task(send_telegram_message(f"✅ <b>تم تحقيق الهدف ({self.symbol})</b>\nربح: +${profit_usd}"))
                     self.active_trade = None
                 elif price >= t["sl"]:
-                    asyncio.create_task(send_telegram_message(f"❌ <b>تم ضرب وقف الخسارة ({self.symbol})</b>\nخسارة: -$5.00"))
+                    asyncio.create_task(send_telegram_message(f"❌ <b>تم ضرب وقف الخسارة ({self.symbol})</b>\nخسارة: -${loss_usd}"))
                     self.active_trade = None
 
         candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df_15m.tail(5000).iterrows()]
 
         return {
             "status": "ok", "current_price": clean(price), "action": action, "htf_trend": htf_trend, "reason": reason,
-            "levels": {"entry": entry, "sl": sl, "tp": tp},
-            "active_trade": self.active_trade, # <--- تمت إضافة هذا المتغير هنا
-            "position_size": position_size, "warning": warning_msg, 
+            "levels": {
+                "entry": entry, "sl": sl, "tp": tp,
+                "sl_pips": sl_pips, "tp_pips": tp_pips,
+                "loss_usd": loss_usd, "profit_usd": profit_usd
+            },
+            "active_trade": self.active_trade,
             "strategies": list(strategies.values()), "candles": candles,
             "source": "MTF Deep Simulator (Exness)"
         }
@@ -355,8 +395,10 @@ def home():
             .badge-buy { background: rgba(34, 197, 94, 0.1); color: #22c55e; border: 1px solid #22c55e; padding: 8px; border-radius: 4px; text-align: center; font-weight: bold; font-size: 15px; }
             .badge-sell { background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid #ef4444; padding: 8px; border-radius: 4px; text-align: center; font-weight: bold; font-size: 15px; }
             .badge-wait { background: rgba(234, 179, 8, 0.1); color: #eab308; border: 1px solid #eab308; padding: 8px; border-radius: 4px; text-align: center; font-weight: bold; font-size: 15px; }
-            .row { display: flex; justify-content: space-between; font-size: 12px; margin-top: 6px; padding-bottom: 3px; border-bottom: 1px solid #111; }
+            
+            .row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-top: 6px; padding-bottom: 3px; border-bottom: 1px solid #111; }
             .val { font-family: monospace; font-weight: bold; }
+            .sub-val { font-size: 10px; display: block; margin-top: 2px;}
             
             .strat-card { background: #0a0a0a; border: 1px solid #222; padding: 8px; border-radius: 4px; margin-bottom: 6px; }
             .strat-title { font-size: 12px; font-weight: bold; color: #eee; margin-bottom: 3px; display: flex; justify-content: space-between; }
@@ -365,7 +407,6 @@ def home():
 
             .trend-bull { color: #22c55e; font-weight: bold; }
             .trend-bear { color: #ef4444; font-weight: bold; }
-            .warning-box { background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; color: #fca5a5; padding: 6px; border-radius: 4px; font-size: 10px; text-align: center; display: none; margin-top: 4px; }
         </style>
     </head>
     <body>
@@ -399,17 +440,29 @@ def home():
                     
                     <div style="margin-top:8px; font-size:11px; color:#aaa; display:flex; justify-content:space-around;">
                         <div>الاتجاه: <span id="htf-trend">-</span></div>
-                        <div>حجم المركز: <strong id="pos-size" style="color:#38bdf8;">0.00</strong></div>
                     </div>
-                    <div id="warn-box" class="warning-box"></div>
                 </div>
                 
                 <div class="box">
-                    <div style="font-size:10px; color:#888; margin-bottom:4px;">مستويات التنفيذ (Exness)</div>
+                    <div style="font-size:10px; color:#888; margin-bottom:4px;">مستويات التنفيذ (محسوبة لـ 0.01 لوت)</div>
                     <div class="row"><span class="lbl">السعر الحالي</span><span id="p-live" class="val" style="color:#facc15;">0.00</span></div>
                     <div class="row"><span class="lbl">منطقة الدخول</span><span id="p-entry" class="val" style="color:#38bdf8;">0.00</span></div>
-                    <div class="row"><span class="lbl">وقف الخسارة (5$)</span><span id="p-sl" class="val" style="color:#ef4444;">0.00</span></div>
-                    <div class="row"><span class="lbl">الهدف (15$)</span><span id="p-tp" class="val" style="color:#4ade80;">0.00</span></div>
+                    
+                    <div class="row">
+                        <span class="lbl">وقف الخسارة (SL)</span>
+                        <div style="text-align:left;">
+                            <span id="p-sl" class="val" style="color:#ef4444;">0.00</span>
+                            <span id="sl-detail" class="sub-val" style="color:#ef4444;"></span>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <span class="lbl">الهدف (TP)</span>
+                        <div style="text-align:left;">
+                            <span id="p-tp" class="val" style="color:#4ade80;">0.00</span>
+                            <span id="tp-detail" class="sub-val" style="color:#4ade80;"></span>
+                        </div>
+                    </div>
                 </div>
                 
                 <div class="box" style="flex:1;">
@@ -448,8 +501,10 @@ def home():
                         const entryEl = document.getElementById('p-entry');
                         const slEl = document.getElementById('p-sl');
                         const tpEl = document.getElementById('p-tp');
+                        const slDetail = document.getElementById('sl-detail');
+                        const tpDetail = document.getElementById('tp-detail');
 
-                        // إذا كان هناك صفقة نشطة (Active Trade)
+                        // إذا كان هناك صفقة نشطة
                         if (data.active_trade) {
                             let t = data.active_trade;
                             badge.innerText = (t.action === 'BUY' ? 'BUY' : 'SELL') + ' (ACTIVE)';
@@ -460,11 +515,15 @@ def home():
                             slEl.innerText = t.sl;
                             tpEl.innerText = t.tp;
 
+                            // نستخدم أرقام الصفقة النشطة
+                            slDetail.innerText = `(${data.levels.loss_usd}$ | ${data.levels.sl_pips} Pips)`;
+                            tpDetail.innerText = `(${data.levels.profit_usd}$ | ${data.levels.tp_pips} Pips)`;
+
                             activeLines.push(series.createPriceLine({ price: t.entry, color: '#38bdf8', lineWidth: 2, title: 'ENTRY' }));
                             activeLines.push(series.createPriceLine({ price: t.sl, color: '#ef4444', lineWidth: 2, title: 'SL' }));
                             activeLines.push(series.createPriceLine({ price: t.tp, color: '#22c55e', lineWidth: 2, title: 'TP' }));
                         } 
-                        // إذا لا توجد صفقة نشطة (Wait)
+                        // إذا لا توجد صفقة
                         else {
                             badge.innerText = data.action === 'BUY' ? 'STRONG BUY' : data.action === 'SELL' ? 'STRONG SELL' : 'WAIT';
                             badge.className = data.action === 'BUY' ? 'badge-buy' : data.action === 'SELL' ? 'badge-sell' : 'badge-wait';
@@ -475,9 +534,14 @@ def home():
                             tpEl.innerText = data.levels.tp;
                             
                             if (data.action !== 'WAIT') {
+                                slDetail.innerText = `(-${data.levels.loss_usd}$ | -${data.levels.sl_pips} Pips)`;
+                                tpDetail.innerText = `(+${data.levels.profit_usd}$ | +${data.levels.tp_pips} Pips)`;
                                 activeLines.push(series.createPriceLine({ price: data.levels.entry, color: '#38bdf8', lineWidth: 2, title: 'ENTRY' }));
                                 activeLines.push(series.createPriceLine({ price: data.levels.sl, color: '#ef4444', lineWidth: 2, title: 'SL' }));
                                 activeLines.push(series.createPriceLine({ price: data.levels.tp, color: '#22c55e', lineWidth: 2, title: 'TP' }));
+                            } else {
+                                slDetail.innerText = "";
+                                tpDetail.innerText = "";
                             }
                         }
 
@@ -485,12 +549,7 @@ def home():
                         trendEl.innerText = data.htf_trend === 'BULLISH' ? 'صاعد (1H)' : 'هابط (1H)';
                         trendEl.className = data.htf_trend === 'BULLISH' ? 'trend-bull' : 'trend-bear';
 
-                        document.getElementById('pos-size').innerText = data.position_size + " Lots";
                         document.getElementById('p-live').innerText = data.current_price;
-                        
-                        const warnBox = document.getElementById('warn-box');
-                        warnBox.style.display = data.warning ? 'block' : 'none';
-                        if (data.warning) warnBox.innerText = data.warning;
                         
                         let stratHtml = '';
                         data.strategies.forEach(s => {
