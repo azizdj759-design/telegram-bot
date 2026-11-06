@@ -8,21 +8,21 @@ import websockets
 import httpx
 from datetime import datetime
 
-app = FastAPI(title="Super Institutional Signal Engine", version="11.0")
+app = FastAPI(title="Super Institutional Signal Engine", version="12.0")
 
 class SuperSignalEngine:
     def __init__(self, symbol="BTCUSDT", account_balance=30.0, risk_pct=0.01):
         self.symbol = symbol
-        self.balance = account_balance  # تم ضبط الرصيد على 30 دولار
-        self.risk_pct = risk_pct        # مخاطرة 1%
+        self.balance = account_balance
+        self.risk_pct = risk_pct
         self.df = pd.DataFrame()
-        self.latest_news = "لا توجد أخبار جارية"
         
     async def fetch_historical_data(self):
-        # جلب 300 شمعة تاريخية فوراً (فريم 15 دقيقة)
-        url = f"https://api.binance.com/api/v3/klines?symbol={self.symbol}&interval=15m&limit=300"
+        # استخدام سيرفر البيانات البديل من Binance لتفادي الحظر
+        url = f"https://data-api.binance.vision/api/v3/klines?symbol={self.symbol}&interval=15m&limit=300"
         async with httpx.AsyncClient() as client:
             response = await client.get(url)
+            response.raise_for_status() # إطلاق خطأ إذا فشل الاتصال
             data = response.json()
             
         df = pd.DataFrame(data).iloc[:, :6]
@@ -66,26 +66,25 @@ class SuperSignalEngine:
         low_close = np.abs(df["Low"] - df["Close"].shift())
         df["ATR"] = (pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)).rolling(14).mean()
 
-        # 2. SMC (الهيكل السعري BOS)
+        # 2. SMC (كسر الهيكل BOS)
         df["Swing_High"] = df["High"] == df["High"].rolling(5).max()
         df["Swing_Low"] = df["Low"] == df["Low"].rolling(5).min()
         last_swing_high = df[df["Swing_High"]]["High"].iloc[-1] if not df[df["Swing_High"]].empty else 0
         last_swing_low = df[df["Swing_Low"]]["Low"].iloc[-1] if not df[df["Swing_Low"]].empty else 0
 
-        # 3. ICT (Fair Value Gaps & Order Blocks)
+        # 3. ICT (فجوات وبلوكات الأوامر)
         df["FVG_Bull"] = df["Low"] > df["High"].shift(2)
         df["FVG_Bear"] = df["High"] < df["Low"].shift(2)
         df["OB_Bull"] = (df["Close"].shift(1) < df["Open"].shift(1)) & (df["Close"] > df["High"].shift(1))
         df["OB_Bear"] = (df["Close"].shift(1) > df["Open"].shift(1)) & (df["Close"] < df["Low"].shift(1))
 
-        last_closed = df.iloc[-2]
-        live_price = df.iloc[-1]["Close"]
+        last_closed = df.iloc[-2] # الشمعة المغلقة السابقة
+        live_price = df.iloc[-1]["Close"] # السعر الحالي
         atr = last_closed["ATR"]
 
         strategies = {}
-        total_score = 0
 
-        # --- تقييم SMC ---
+        # --- 1. SMC ---
         if live_price > last_swing_high:
             strategies["SMC"] = {"name": "SMC (كسر هيكل صاعد)", "status": "اختراق قمة سابقة (BOS صاعد)", "score": 2.0}
         elif live_price < last_swing_low:
@@ -93,7 +92,7 @@ class SuperSignalEngine:
         else:
             strategies["SMC"] = {"name": "SMC", "status": "داخل نطاق السيولة", "score": 0}
 
-        # --- تقييم ICT ---
+        # --- 2. ICT ---
         if last_closed["FVG_Bull"] or last_closed["OB_Bull"]:
             strategies["ICT"] = {"name": "ICT (فجوة/بلوك)", "status": "فجوة أو بلوك أوامر شرائي", "score": 1.5}
         elif last_closed["FVG_Bear"] or last_closed["OB_Bear"]:
@@ -101,13 +100,15 @@ class SuperSignalEngine:
         else:
             strategies["ICT"] = {"name": "ICT", "status": "لا توجد فجوات نشطة", "score": 0}
 
-        # --- تقييم إليوت (اتجاه) ---
-        if last_closed["EMA_21"] > last_closed["EMA_200"]:
-            strategies["Elliott"] = {"name": "إليوت (موجة 3/5)", "status": "موجة دافعة صاعدة", "score": 1.0}
+        # --- 3. Elliott ---
+        if last_closed["EMA_21"] > last_closed["EMA_200"] and live_price > last_closed["EMA_50"]:
+            strategies["Elliott"] = {"name": "إليوت", "status": "موجة دافعة صاعدة (3/5)", "score": 1.0}
+        elif last_closed["EMA_21"] < last_closed["EMA_200"] and live_price < last_closed["EMA_50"]:
+            strategies["Elliott"] = {"name": "إليوت", "status": "موجة دافعة هابطة (3/5)", "score": -1.0}
         else:
-            strategies["Elliott"] = {"name": "إليوت (موجة 3/5)", "status": "موجة دافعة هابطة", "score": -1.0}
+            strategies["Elliott"] = {"name": "إليوت", "status": "موجة تصحيحية", "score": 0}
 
-        # --- تقييم الفني ---
+        # --- 4. Technical ---
         if last_closed["RSI"] < 35:
             strategies["Technical"] = {"name": "الفني (RSI)", "status": f"تشبع بيعي ({last_closed['RSI']:.1f})", "score": 1.0}
         elif last_closed["RSI"] > 65:
@@ -117,12 +118,12 @@ class SuperSignalEngine:
 
         total_score = sum([s["score"] for s in strategies.values()])
 
-        # القرار (يحتاج توافق 4 نقاط على الأقل)
+        # القرار (نحتاج إلى 4 نقاط لاتخاذ قرار قوي)
         action = "WAIT"
         if total_score >= 4.0: action = "BUY"
         elif total_score <= -4.0: action = "SELL"
 
-        # --- إدارة المخاطر لرصيد 30$ ---
+        # --- إدارة المخاطر (رصيد 30$) ---
         risk_amount = self.balance * self.risk_pct  # 0.30$
         sl_dist = 1.5 * atr
         position_size = 0
@@ -134,9 +135,8 @@ class SuperSignalEngine:
             tp = entry + (3.0 * atr) if action == "BUY" else entry - (3.0 * atr)
             position_size = risk_amount / sl_dist
             
-            # تنبيه إذا كان اللوت صغيراً جداً
             if position_size < 0.0001:
-                warning_msg = "⚠️ حجم اللوت صغير جداً! قد لا يقبله البروكر."
+                warning_msg = "⚠️ حجم اللوت صغير جداً! قد يرفضه البروكر."
             entry = round(entry, 2)
             sl = round(sl, 2)
             tp = round(tp, 2)
@@ -158,28 +158,31 @@ async def websocket_endpoint(websocket: WebSocket, symbol: str):
     engine = SuperSignalEngine(symbol=symbol, account_balance=30.0, risk_pct=0.01)
     
     try:
-        # 1. جلب البيانات التاريخية أولاً
+        # 1. جلب البيانات التاريخية وإرسالها فوراً للواجهة
         await engine.fetch_historical_data()
+        initial_result = engine.analyze_strategies()
+        if initial_result:
+            await websocket.send_text(json.dumps(initial_result))
         
         # 2. الاتصال بالبث اللحظي
-        binance_url = f"wss://stream.binance.com:9443/ws/{symbol.lower()}@kline_15m"
+        binance_url = f"wss://stream.binance.com:443/ws/{symbol.lower()}@kline_15m"
         async with websockets.connect(binance_url) as binance_ws:
             while True:
                 msg = await binance_ws.recv()
                 data = json.loads(msg)
-                
-                # تحديث الشمعة الحالية
                 engine.update_live_data(data['k'])
                 
-                # تحليل وإرسال النتيجة
                 result = engine.analyze_strategies()
                 if result:
                     await websocket.send_text(json.dumps(result))
                 
-    except WebSocketDisconnect:
-        pass
     except Exception as e:
-        print(f"Error: {e}")
+        # إرسال الخطأ للواجهة بدلاً من التجمد
+        error_msg = json.dumps({"status": "error", "message": f"فشل الاتصال بالبيانات: {str(e)}"})
+        try:
+            await websocket.send_text(error_msg)
+        except:
+            pass
 
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -221,7 +224,7 @@ def home():
             <div class="panel">
                 <div class="box" style="text-align:center;">
                     <div style="font-size:11px; color:#888; margin-bottom:5px;">إشارة التداول (فريم 15 دقيقة)</div>
-                    <div id="signal-badge" class="badge-wait">جاري التحليل...</div>
+                    <div id="signal-badge" class="badge-wait">جاري الاتصال بالبيانات...</div>
                     
                     <div style="margin-top:10px; font-size:12px; color:#aaa;">
                         حجم المركز: <strong id="pos-size" style="color:#38bdf8; font-size:16px;">0.00</strong><br>
@@ -264,12 +267,21 @@ def home():
 
             function switchSymbol(symbol) {
                 if (ws) ws.close();
+                document.getElementById('signal-badge').innerText = "جاري جلب البيانات...";
+                document.getElementById('signal-badge').className = 'badge-wait';
+                
                 let proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
                 ws = new WebSocket(proto + window.location.host + '/ws/' + symbol);
 
                 ws.onmessage = function(event) {
                     let data = JSON.parse(event.data);
                     
+                    if (data.status === 'error') {
+                        document.getElementById('signal-badge').innerText = data.message;
+                        document.getElementById('signal-badge').className = 'badge-sell';
+                        return;
+                    }
+
                     series.setData(data.candles);
                     clearLines();
 
