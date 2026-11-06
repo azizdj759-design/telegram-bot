@@ -5,7 +5,7 @@ import pandas as pd
 import math
 from datetime import datetime, timedelta
 
-app = FastAPI(title="Pro Signal Engine - Multi-Timeframe", version="27.0")
+app = FastAPI(title="Pro Signal Engine - Multi-Timeframe", version="27.1")
 
 engines = {}
 
@@ -13,7 +13,7 @@ class MarketSimulator:
     def __init__(self, symbol, balance=30.0, risk_usd=5.0):
         self.symbol = symbol
         self.balance = balance
-        self.risk_usd = risk_usd # الخسارة 5$
+        self.risk_usd = risk_usd
         
         if symbol == "BTCUSDT":
             self.base_price = 65000.0
@@ -78,7 +78,6 @@ class MarketSimulator:
     def analyze(self):
         df_15m = self._add_indicators(self.df_15m)
         
-        # تحويل إلى فريم الساعة
         df_1h = self.df_15m.resample('1h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
         df_1h = self._add_indicators(df_1h)
 
@@ -98,7 +97,6 @@ class MarketSimulator:
         strategies = {}
         total_score = 0
 
-        # SMC
         if price > last_swing_high:
             strategies["SMC"] = {"name": "SMC (كسر هيكل صاعد)", "status": "BOS صاعد", "score": 2.0}
             total_score += 2.0
@@ -108,7 +106,6 @@ class MarketSimulator:
         else:
             strategies["SMC"] = {"name": "SMC", "status": "داخل نطاق السيولة", "score": 0}
 
-        # ICT
         if fvg_bull.iloc[-2]:
             strategies["ICT"] = {"name": "ICT (فجوة صاعدة)", "status": "FVG صاعدة", "score": 1.5}
             total_score += 1.5
@@ -118,7 +115,6 @@ class MarketSimulator:
         else:
             strategies["ICT"] = {"name": "ICT", "status": "لا توجد فجوات نشطة", "score": 0}
 
-        # Elliott (MTF)
         if htf_trend == "BULLISH":
             strategies["Elliott"] = {"name": "إليوت (1H)", "status": "موجة صاعدة", "score": 1.0}
             total_score += 1.0
@@ -126,7 +122,6 @@ class MarketSimulator:
             strategies["Elliott"] = {"name": "إليوت (1H)", "status": "موجة هابطة", "score": -1.0}
             total_score -= 1.0
 
-        # Technical
         if last["RSI"] < 40:
             strategies["Technical"] = {"name": "الفني", "status": f"تشبع بيعي ({last['RSI']:.1f})", "score": 1.0}
             total_score += 1.0
@@ -136,14 +131,12 @@ class MarketSimulator:
         else:
             strategies["Technical"] = {"name": "الفني", "status": f"محايد ({last['RSI']:.1f})", "score": 0}
 
-        # القرار الصارم
         action = "WAIT"
         if htf_trend == "BULLISH" and total_score >= 3.0:
             action = "BUY"
         elif htf_trend == "BEARISH" and total_score <= -3.0:
             action = "SELL"
 
-        # إدارة المخاطر (خسارة 5$)
         sl_dist = 1.5 * atr
         position_size, entry, sl, tp, warning_msg = 0, 0, 0, 0, ""
         
@@ -157,7 +150,8 @@ class MarketSimulator:
             if position_size < 0.0001:
                 warning_msg = "⚠️ حجم اللوت صغير جداً!"
 
-        candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df_15m.tail(100).iterrows()]
+        # زيادة عدد الشموع المرسلة إلى 300
+        candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df_15m.tail(300).iterrows()]
 
         return {
             "status": "ok", "current_price": clean(price), "action": action, "htf_trend": htf_trend,
@@ -212,10 +206,11 @@ def home():
             .source-tag { font-size: 9px; color: #666; text-align: center; margin-top: 4px; }
             .chart-wrap { flex: 1; background: #000; position: relative; }
             #chart { width: 100%; height: 100%; }
+            /* تعديلات الهاتف لزيادة مساحة الشارت */
             @media (max-width: 768px) {
                 .layout { flex-direction: column; }
-                .panel { width: 100%; border-left: none; border-bottom: 1px solid #121212; height: 55%; }
-                .chart-wrap { height: 45%; }
+                .panel { width: 100%; border-left: none; border-bottom: 1px solid #121212; height: 40%; } /* تصغير اللوحة */
+                .chart-wrap { height: 60%; } /* تكبير الشارت */
             }
         </style>
     </head>
@@ -283,6 +278,10 @@ def home():
                     .then(res => res.json())
                     .then(data => {
                         series.setData(data.candles);
+                        
+                        // هذا السطر هو السر: يجعل الشارت يتكيف مع الحجم ويعرض كل الشموع
+                        chart.timeScale().fitContent(); 
+                        
                         clearLines();
                         
                         const badge = document.getElementById('signal-badge');
