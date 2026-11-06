@@ -1,12 +1,15 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 import numpy as np
 import pandas as pd
-import asyncio
 import json
+import math
 from datetime import datetime, timedelta
 
-app = FastAPI(title="Pro Signal Engine - Simulator", version="25.0")
+app = FastAPI(title="Pro Signal Engine - Safe Mode", version="26.0")
+
+# مخزن مؤقت للحفاظ على حالة المحاكاة لكل عملة
+engines = {}
 
 class MarketSimulator:
     def __init__(self, symbol, balance=30.0, risk_usd=3.0):
@@ -14,14 +17,13 @@ class MarketSimulator:
         self.balance = balance
         self.risk_usd = risk_usd
         
-        # تحديد السعر الأساسي لكل أصل
         if symbol == "BTCUSDT":
             self.base_price = 65000.0
             self.volatility = 150.0
         elif symbol == "XAUUSD":
             self.base_price = 2350.0
             self.volatility = 4.0
-        else: # WTIUSD
+        else:
             self.base_price = 78.0
             self.volatility = 0.8
 
@@ -34,7 +36,6 @@ class MarketSimulator:
         
         prices = [self.base_price]
         for _ in range(length - 1):
-            # حركة عشوائية واقعية (Random Walk with Drift)
             change = np.random.normal(0, self.volatility)
             prices.append(prices[-1] + change)
             
@@ -47,11 +48,8 @@ class MarketSimulator:
         return df
 
     def update_live_tick(self):
-        # تحديث السعر الحالي لمحاكاة الحركة اللحظية
         change = np.random.normal(0, self.volatility * 0.2)
         self.current_price += change
-        
-        # تحديث الشمعة الأخيرة
         self.df.iloc[-1, self.df.columns.get_loc('Close')] = self.current_price
         self.df.iloc[-1, self.df.columns.get_loc('High')] = max(self.df.iloc[-1]['High'], self.current_price)
         self.df.iloc[-1, self.df.columns.get_loc('Low')] = min(self.df.iloc[-1]['Low'], self.current_price)
@@ -59,7 +57,6 @@ class MarketSimulator:
     def analyze(self):
         df = self.df.copy()
         
-        # 1. المؤشرات الفنية
         df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
         df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
         df["EMA_200"] = df["Close"].ewm(span=200, adjust=False).mean()
@@ -74,13 +71,11 @@ class MarketSimulator:
         low_close = np.abs(df["Low"] - df["Close"].shift())
         df["ATR"] = (pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)).rolling(14).mean()
 
-        # 2. SMC (الهيكل السعري)
         df["Swing_High"] = df["High"] == df["High"].rolling(5).max()
         df["Swing_Low"] = df["Low"] == df["Low"].rolling(5).min()
         last_swing_high = df[df["Swing_High"]]["High"].iloc[-1] if not df[df["Swing_High"]].empty else 0
         last_swing_low = df[df["Swing_Low"]]["Low"].iloc[-1] if not df[df["Swing_Low"]].empty else 0
 
-        # 3. ICT (الفجوات وبلوكات الأوامر)
         df["FVG_Bull"] = df["Low"] > df["High"].shift(2)
         df["FVG_Bear"] = df["High"] < df["Low"].shift(2)
         df["OB_Bull"] = (df["Close"].shift(1) < df["Open"].shift(1)) & (df["Close"] > df["High"].shift(1))
@@ -90,9 +85,12 @@ class MarketSimulator:
         price = df.iloc[-1]["Close"]
         atr = last["ATR"] if not pd.isna(last["ATR"]) else self.volatility
 
-        strategies = {}
+        # دالة مساعدة لتنظيف الأرقام من NaN
+        def clean(v):
+            if pd.isna(v) or math.isinf(v): return 0.0
+            return round(float(v), 2)
 
-        # SMC
+        strategies = {}
         if price > last_swing_high:
             strategies["SMC"] = {"name": "SMC (كسر هيكل صاعد)", "status": "اختراق قمة سابقة (BOS)", "score": 2.0}
         elif price < last_swing_low:
@@ -100,7 +98,6 @@ class MarketSimulator:
         else:
             strategies["SMC"] = {"name": "SMC", "status": "داخل نطاق السيولة", "score": 0}
 
-        # ICT
         if last["FVG_Bull"] or last["OB_Bull"]:
             strategies["ICT"] = {"name": "ICT (فجوة/بلوك)", "status": "فجوة أو بلوك أوامر شرائي", "score": 1.5}
         elif last["FVG_Bear"] or last["OB_Bear"]:
@@ -108,7 +105,6 @@ class MarketSimulator:
         else:
             strategies["ICT"] = {"name": "ICT", "status": "لا توجد فجوات نشطة", "score": 0}
 
-        # Elliott
         if last["EMA_21"] > last["EMA_200"] and price > last["EMA_50"]:
             strategies["Elliott"] = {"name": "إليوت", "status": "موجة دافعة صاعدة (3/5)", "score": 1.0}
         elif last["EMA_21"] < last["EMA_200"] and price < last["EMA_50"]:
@@ -116,7 +112,6 @@ class MarketSimulator:
         else:
             strategies["Elliott"] = {"name": "إليوت", "status": "موجة تصحيحية", "score": 0}
 
-        # Technical
         if last["RSI"] < 35:
             strategies["Technical"] = {"name": "الفني (RSI)", "status": f"تشبع بيعي ({last['RSI']:.1f})", "score": 1.0}
         elif last["RSI"] > 65:
@@ -125,50 +120,39 @@ class MarketSimulator:
             strategies["Technical"] = {"name": "الفني (RSI)", "status": f"محايد ({last['RSI']:.1f})", "score": 0}
 
         total_score = sum(s["score"] for s in strategies.values())
-
         action = "WAIT"
         if total_score >= 4.0: action = "BUY"
         elif total_score <= -4.0: action = "SELL"
 
-        # إدارة المخاطر (خسارة 3$)
         sl_dist = 1.5 * atr
-        position_size = 0
-        warning_msg = ""
+        position_size, entry, sl, tp, warning_msg = 0, 0, 0, 0, ""
         
         if action != "WAIT" and sl_dist > 0:
-            entry = price
-            sl = entry - sl_dist if action == "BUY" else entry + sl_dist
-            tp = entry + (3.0 * atr) if action == "BUY" else entry - (3.0 * atr)
-            position_size = self.risk_usd / sl_dist
+            entry = clean(price)
+            sl = clean(entry - sl_dist if action == "BUY" else entry + sl_dist)
+            tp = clean(entry + (3.0 * atr) if action == "BUY" else entry - (3.0 * atr))
+            position_size = round(self.risk_usd / sl_dist, 4)
             if position_size < 0.0001:
-                warning_msg = "⚠️ حجم اللوت صغير جداً! قد يرفضه البروكر."
-            entry, sl, tp = round(entry, 2), round(sl, 2), round(tp, 2)
-        else:
-            entry, sl, tp = 0, 0, 0
+                warning_msg = "⚠️ حجم اللوت صغير جداً!"
 
-        candles = [{"time": int(idx.timestamp()), "open": float(row["Open"]), "high": float(row["High"]), "low": float(row["Low"]), "close": float(row["Close"])} for idx, row in df.tail(150).iterrows()]
+        candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df.tail(100).iterrows()]
 
         return {
-            "status": "ok", "symbol": self.symbol, "current_price": round(price, 2), "action": action,
+            "status": "ok", "current_price": clean(price), "action": action,
             "levels": {"entry": entry, "sl": sl, "tp": tp},
-            "position_size": round(position_size, 4), "risk_usd": self.risk_usd,
-            "warning": warning_msg, "strategies": list(strategies.values()), "candles": candles,
-            "source": "Realistic Simulation Engine"
+            "position_size": position_size, "warning": warning_msg, 
+            "strategies": list(strategies.values()), "candles": candles,
+            "source": "Simulation (Safe HTTP Mode)"
         }
 
-@app.websocket("/ws/{symbol}")
-async def websocket_endpoint(websocket: WebSocket, symbol: str):
-    await websocket.accept()
-    engine = MarketSimulator(symbol=symbol)
+# مسار API يعيد البيانات كـ JSON مباشر
+@app.get("/api/data/{symbol}")
+def get_data(symbol: str):
+    if symbol not in engines:
+        engines[symbol] = MarketSimulator(symbol=symbol)
     
-    try:
-        while True:
-            engine.update_live_tick()
-            result = engine.analyze()
-            await websocket.send_text(json.dumps(result))
-            await asyncio.sleep(2) # تحديث كل ثانيتين
-    except WebSocketDisconnect:
-        pass
+    engines[symbol].update_live_tick()
+    return engines[symbol].analyze()
 
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -178,7 +162,7 @@ def home():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Pro Signal Engine (Simulation)</title>
+        <title>Pro Signal Engine</title>
         <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
         <style>
             * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -220,11 +204,11 @@ def home():
         <div class="layout">
             <div class="panel">
                 <div class="box" style="text-align:center;">
-                    <div style="font-size:10px; color:#888; margin-bottom:4px;">إشارة التداول (15 دقيقة)</div>
-                    <div id="signal-badge" class="badge-wait">جاري التحميل...</div>
+                    <div style="font-size:10px; color:#888; margin-bottom:4px;">إشارة التداول</div>
+                    <div id="signal-badge" class="badge-wait">جاري الاتصال...</div>
                     <div style="margin-top:8px; font-size:11px; color:#aaa;">
                         حجم المركز: <strong id="pos-size" style="color:#38bdf8; font-size:14px;">0.00</strong><br>
-                        <span style="font-size:9px;">(مخاطرة ثابتة: $3.00 خسارة قصوى)</span>
+                        <span style="font-size:9px;">(خسارة قصوى: $3.00)</span>
                     </div>
                     <div id="warn-box" class="warning-box"></div>
                     <div id="source-tag" class="source-tag"></div>
@@ -245,8 +229,8 @@ def home():
         </div>
         <script>
             let chart, series, activeLines = [];
-            let ws = null;
             let currentSymbol = 'BTCUSDT';
+            let intervalId = null;
 
             function initChart() {
                 chart = LightweightCharts.createChart(document.getElementById('chart'), {
@@ -260,54 +244,57 @@ def home():
 
             function clearLines() { activeLines.forEach(l => series.removePriceLine(l)); activeLines = []; }
 
+            function fetchData() {
+                fetch('/api/data/' + currentSymbol)
+                    .then(res => res.json())
+                    .then(data => {
+                        series.setData(data.candles);
+                        clearLines();
+                        
+                        const badge = document.getElementById('signal-badge');
+                        badge.innerText = data.action === 'BUY' ? 'شراء قوي' : data.action === 'SELL' ? 'بيع قوي' : 'ترقب';
+                        badge.className = data.action === 'BUY' ? 'badge-buy' : data.action === 'SELL' ? 'badge-sell' : 'badge-wait';
+                        
+                        document.getElementById('pos-size').innerText = data.position_size;
+                        document.getElementById('p-live').innerText = data.current_price;
+                        document.getElementById('p-entry').innerText = data.levels.entry;
+                        document.getElementById('p-sl').innerText = data.levels.sl;
+                        document.getElementById('p-tp').innerText = data.levels.tp;
+                        document.getElementById('source-tag').innerText = "المصدر: " + data.source;
+                        
+                        const warnBox = document.getElementById('warn-box');
+                        warnBox.style.display = data.warning ? 'block' : 'none';
+                        if (data.warning) warnBox.innerText = data.warning;
+                        
+                        let stratHtml = '';
+                        data.strategies.forEach(s => {
+                            let color = s.score > 0 ? '#4ade80' : (s.score < 0 ? '#f87171' : '#888');
+                            stratHtml += `<div class="strat-item"><strong>${s.name}</strong><br><span style="color:${color}">${s.status} (${s.score > 0 ? '+' : ''}${s.score})</span></div>`;
+                        });
+                        document.getElementById('strategies-container').innerHTML = stratHtml;
+                        
+                        if (data.action !== 'WAIT') {
+                            activeLines.push(series.createPriceLine({ price: data.levels.entry, color: '#38bdf8', lineWidth: 2, title: 'ENTRY' }));
+                            activeLines.push(series.createPriceLine({ price: data.levels.sl, color: '#ef4444', lineWidth: 2, title: 'SL' }));
+                            activeLines.push(series.createPriceLine({ price: data.levels.tp, color: '#22c55e', lineWidth: 2, title: 'TP' }));
+                        }
+                    })
+                    .catch(err => {
+                        console.error("Fetch error:", err);
+                        document.getElementById('signal-badge').innerText = "خطأ في الاتصال";
+                    });
+            }
+
             function switchSymbol(symbol) {
-                if (ws) { ws.onclose = null; ws.close(); }
                 currentSymbol = symbol;
-                
                 document.querySelectorAll('.m-btn').forEach(b => b.classList.remove('active'));
                 document.getElementById('btn-' + symbol).classList.add('active');
                 
                 document.getElementById('signal-badge').innerText = "جاري التحميل...";
-                document.getElementById('signal-badge').className = 'badge-wait';
                 
-                let proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-                ws = new WebSocket(proto + window.location.host + '/ws/' + symbol);
-
-                ws.onmessage = (event) => {
-                    let data = JSON.parse(event.data);
-                    
-                    series.setData(data.candles);
-                    clearLines();
-                    
-                    const badge = document.getElementById('signal-badge');
-                    badge.innerText = data.action === 'BUY' ? 'شراء قوي' : data.action === 'SELL' ? 'بيع قوي' : 'ترقب';
-                    badge.className = data.action === 'BUY' ? 'badge-buy' : data.action === 'SELL' ? 'badge-sell' : 'badge-wait';
-                    
-                    document.getElementById('pos-size').innerText = data.position_size;
-                    document.getElementById('p-live').innerText = data.current_price;
-                    document.getElementById('p-entry').innerText = data.levels.entry;
-                    document.getElementById('p-sl').innerText = data.levels.sl;
-                    document.getElementById('p-tp').innerText = data.levels.tp;
-                    document.getElementById('source-tag').innerText = "المصدر: " + data.source;
-                    
-                    const warnBox = document.getElementById('warn-box');
-                    warnBox.style.display = data.warning ? 'block' : 'none';
-                    if (data.warning) warnBox.innerText = data.warning;
-                    
-                    let stratHtml = '';
-                    data.strategies.forEach(s => {
-                        let color = s.score > 0 ? '#4ade80' : (s.score < 0 ? '#f87171' : '#888');
-                        stratHtml += `<div class="strat-item"><strong>${s.name}</strong><br><span style="color:${color}">${s.status} (${s.score > 0 ? '+' : ''}${s.score})</span></div>`;
-                    });
-                    document.getElementById('strategies-container').innerHTML = stratHtml;
-                    
-                    if (data.action !== 'WAIT') {
-                        activeLines.push(series.createPriceLine({ price: data.levels.entry, color: '#38bdf8', lineWidth: 2, title: 'ENTRY' }));
-                        activeLines.push(series.createPriceLine({ price: data.levels.sl, color: '#ef4444', lineWidth: 2, title: 'SL' }));
-                        activeLines.push(series.createPriceLine({ price: data.levels.tp, color: '#22c55e', lineWidth: 2, title: 'TP' }));
-                    }
-                };
-                ws.onclose = () => { setTimeout(() => switchSymbol(currentSymbol), 3000); };
+                if (intervalId) clearInterval(intervalId);
+                fetchData();
+                intervalId = setInterval(fetchData, 2000); // طلب التحديث كل ثانيتين
             }
 
             window.onload = () => { initChart(); switchSymbol('BTCUSDT'); };
