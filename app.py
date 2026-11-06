@@ -7,41 +7,45 @@ import httpx
 import asyncio
 from datetime import datetime, timedelta
 
-app = FastAPI(title="Ultimate Pro Signal Engine", version="30.0")
+app = FastAPI(title="Ultimate Pro Signal Engine", version="35.0")
 
 TELEGRAM_TOKEN = "8741070555:AAGf6ys8UH8TZwlQpy_vWff9YONZ9BDmOok"
-TELEGRAM_CHAT_ID = None 
 
-async def get_chat_id():
-    global TELEGRAM_CHAT_ID
-    if TELEGRAM_CHAT_ID: return True
+SUBSCRIBERS = set()
+LAST_UPDATE_ID = 0
+
+async def sync_subscribers():
+    global LAST_UPDATE_ID
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates?offset={LAST_UPDATE_ID + 1}"
         async with httpx.AsyncClient() as client:
             res = await client.get(url)
             data = res.json()
             if data.get("ok") and data.get("result"):
-                TELEGRAM_CHAT_ID = data["result"][-1]["message"]["chat"]["id"]
-                return True
+                for update in data["result"]:
+                    LAST_UPDATE_ID = update["update_id"]
+                    if "message" in update and "chat" in update["message"]:
+                        SUBSCRIBERS.add(update["message"]["chat"]["id"])
     except Exception:
         pass
-    return False
 
 async def send_telegram_message(message: str):
-    global TELEGRAM_CHAT_ID
-    if not TELEGRAM_CHAT_ID:
-        await get_chat_id()
-    if not TELEGRAM_CHAT_ID: return False
+    await sync_subscribers() 
+    if not SUBSCRIBERS: return False
     
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     async with httpx.AsyncClient() as client:
-        res = await client.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"})
-        return res.status_code == 200
+        for chat_id in list(SUBSCRIBERS):
+            try:
+                await client.post(url, json={"chat_id": chat_id, "text": message, "parse_mode": "HTML"})
+            except:
+                pass
+    return True
 
-@app.get("/test-telegram")
-async def test_telegram():
-    success = await send_telegram_message("🚀 <b>النظام الاحترافي v30.0 جاهز!</b>\nسيتم إرسال التفاصيل الدقيقة للصفقات هنا.")
-    return {"status": "success" if success else "error"}
+@app.get("/subscribers")
+async def get_subscribers():
+    await sync_subscribers()
+    return {"subscribers_count": len(SUBSCRIBERS)}
 
 engines = {}
 
@@ -53,22 +57,22 @@ class MarketSimulator:
         self.active_trade = None
         self.last_action = "WAIT"
         
-        # إعدادات الأصول والمحاكاة الدقيقة
-        if symbol == "BTCUSDT":
-            self.base_price, self.volatility, self.decimals = 65000.0, 150.0, 2
-        elif symbol == "ETHUSDT":
-            self.base_price, self.volatility, self.decimals = 3500.0, 15.0, 2
-        elif symbol == "XAUUSD":
-            self.base_price, self.volatility, self.decimals = 2350.0, 4.0, 2
-        elif symbol == "EURUSD":
-            self.base_price, self.volatility, self.decimals = 1.08500, 0.0015, 5
-        elif symbol == "GBPUSD":
-            self.base_price, self.volatility, self.decimals = 1.27000, 0.0018, 5
-        else:
-            self.base_price, self.volatility, self.decimals = 78.0, 0.8, 2
+        # إعدادات الأصول الجديدة (محاكاة دقيقة لأسعار Exness)
+        if symbol == "BTCUSDT": self.base_price, self.volatility, self.decimals = 65000.0, 150.0, 2
+        elif symbol == "ETHUSDT": self.base_price, self.volatility, self.decimals = 3500.0, 15.0, 2
+        elif symbol == "SOLUSDT": self.base_price, self.volatility, self.decimals = 150.0, 2.5, 2
+        elif symbol == "BNBUSDT": self.base_price, self.volatility, self.decimals = 600.0, 10.0, 2
+        elif symbol == "XRPUSDT": self.base_price, self.volatility, self.decimals = 0.5500, 0.015, 4
+        elif symbol == "XAUUSD": self.base_price, self.volatility, self.decimals = 2350.0, 4.0, 2
+        elif symbol == "XAGUSD": self.base_price, self.volatility, self.decimals = 30.0, 0.3, 2
+        elif symbol == "EURUSD": self.base_price, self.volatility, self.decimals = 1.08500, 0.0015, 5
+        elif symbol == "GBPUSD": self.base_price, self.volatility, self.decimals = 1.27000, 0.0018, 5
+        elif symbol == "USDJPY": self.base_price, self.volatility, self.decimals = 155.000, 0.25, 3
+        elif symbol == "AUDUSD": self.base_price, self.volatility, self.decimals = 0.66000, 0.0012, 5
+        elif symbol == "USDCAD": self.base_price, self.volatility, self.decimals = 1.37000, 0.0014, 5
+        else: self.base_price, self.volatility, self.decimals = 78.0, 0.8, 2 # WTI
 
         self.current_price = self.base_price
-        # توليد 5200 شمعة لدعم 5000 شمعة في الشارت
         self.df_15m = self._generate_historical_data(5200)
 
     def _generate_historical_data(self, length):
@@ -117,7 +121,6 @@ class MarketSimulator:
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         df["RSI"] = 100 - (100 / (1 + (gain / loss)))
         
-        # إضافة MACD
         exp1 = df["Close"].ewm(span=12, adjust=False).mean()
         exp2 = df["Close"].ewm(span=26, adjust=False).mean()
         df["MACD"] = exp1 - exp2
@@ -128,51 +131,61 @@ class MarketSimulator:
         low_close = np.abs(df["Low"] - df["Close"].shift())
         df["ATR"] = (pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)).rolling(14).mean()
         
-        # اكتشاف القمم والقيعان (Swings) بدقة
         df["Swing_High"] = df["High"] == df["High"].rolling(7, center=True).max()
         df["Swing_Low"] = df["Low"] == df["Low"].rolling(7, center=True).min()
         return df
 
     def analyze(self):
         df_15m = self._add_indicators(self.df_15m)
-        
-        # فريم الساعة للاتجاه
         df_1h = self.df_15m.resample('1h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
         df_1h = self._add_indicators(df_1h)
 
-        # 1. تحليل الاتجاه العام (HTF)
         htf_last = df_1h.iloc[-2]
         htf_trend = "BULLISH" if htf_last["EMA_50"] > htf_last["EMA_200"] else "BEARISH"
-        htf_desc = "صاعد (EMA 50 فوق 200)" if htf_trend == "BULLISH" else "هابط (EMA 50 تحت 200)"
 
         last = df_15m.iloc[-2]
+        prev = df_15m.iloc[-3]
         price = df_15m.iloc[-1]["Close"]
         atr = last["ATR"] if not pd.isna(last["ATR"]) else self.volatility
 
         strategies = {}
         total_score = 0
 
-        # 2. تحليل SMC المتقدم (كسر الهيكل BOS)
+        # 1. SMC (BOS, CHoCH, Sweeps)
         swing_highs = df_15m[df_15m["Swing_High"]]["High"].tail(3).values
         swing_lows = df_15m[df_15m["Swing_Low"]]["Low"].tail(3).values
         
         smc_status, smc_score, smc_detail = "لا يوجد كسر هيكل", 0, "السعر يتحرك داخل نطاق عرضي."
         if len(swing_highs) > 0 and price > swing_highs[-1]:
-            smc_status, smc_score = "كسر هيكل صاعد (BOS)", 2.0
-            smc_detail = f"تم اختراق القمة السابقة عند {swing_highs[-1]:.{self.decimals}f}."
+            if htf_trend == "BEARISH":
+                smc_status, smc_score = "تغيير شخصية صاعد (CHoCH)", 2.5
+                smc_detail = f"اختراق قمة هابطة سابقة عند {swing_highs[-1]:.{self.decimals}f}."
+            else:
+                smc_status, smc_score = "كسر هيكل صاعد (BOS)", 2.0
+                smc_detail = f"تم اختراق القمة السابقة عند {swing_highs[-1]:.{self.decimals}f}."
         elif len(swing_lows) > 0 and price < swing_lows[-1]:
-            smc_status, smc_score = "كسر هيكل هابط (BOS)", -2.0
-            smc_detail = f"تم اختراق القاع السابق عند {swing_lows[-1]:.{self.decimals}f}."
-        
-        strategies["SMC"] = {"name": "SMC (السيولة والهيكل)", "status": smc_status, "detail": smc_detail, "score": smc_score}
+            if htf_trend == "BULLISH":
+                smc_status, smc_score = "تغيير شخصية هابط (CHoCH)", -2.5
+                smc_detail = f"اختراق قاع صاعد سابق عند {swing_lows[-1]:.{self.decimals}f}."
+            else:
+                smc_status, smc_score = "كسر هيكل هابط (BOS)", -2.0
+                smc_detail = f"تم اختراق القاع السابق عند {swing_lows[-1]:.{self.decimals}f}."
+
+        if len(swing_lows) > 0 and prev["Low"] < swing_lows[-1] and prev["Close"] > swing_lows[-1]:
+            smc_status, smc_score = "اصطياد سيولة شرائية (Sweep)", 3.0
+            smc_detail = "السعر كسر قاعاً وهمياً وأغلق فوقه (انعكاس قوي)."
+        elif len(swing_highs) > 0 and prev["High"] > swing_highs[-1] and prev["Close"] < swing_highs[-1]:
+            smc_status, smc_score = "اصطياد سيولة بيعية (Sweep)", -3.0
+            smc_detail = "السعر كسر قمة وهمية وأغلق تحتها (انعكاس قوي)."
+
+        strategies["SMC"] = {"name": "SMC (الهيكل والسيولة)", "status": smc_status, "detail": smc_detail, "score": smc_score}
         total_score += smc_score
 
-        # 3. تحليل ICT المتقدم (فجوات FVG)
+        # 2. ICT (FVG)
         fvg_bull = df_15m["Low"] > df_15m["High"].shift(2)
         fvg_bear = df_15m["High"] < df_15m["Low"].shift(2)
         
         ict_status, ict_score, ict_detail = "لا توجد فجوات سعرية", 0, "لم يتم اكتشاف فجوات قريبة."
-        # البحث في آخر 10 شموع عن فجوة
         if fvg_bull.tail(10).any():
             ict_status, ict_score = "فجوة صاعدة (Bullish FVG)", 1.5
             ict_detail = "يوجد فجوة سعرية غير مغلقة تدعم الصعود."
@@ -183,7 +196,31 @@ class MarketSimulator:
         strategies["ICT"] = {"name": "ICT (الفجوات السعرية)", "status": ict_status, "detail": ict_detail, "score": ict_score}
         total_score += ict_score
 
-        # 4. تحليل إليوت (بناء على القمم والقيعان)
+        # 3. RSI Divergence
+        div_status, div_score, div_detail = "لا يوجد دايفرجنس", 0, "لا يوجد تباعد بين السعر والمؤشر."
+        recent_df = df_15m.tail(30)
+        price_min_idx = recent_df['Low'].idxmin()
+        if price_min_idx != recent_df.index[-1]:
+            prev_price_min_idx = recent_df.loc[:price_min_idx].iloc[:-1]['Low'].idxmin()
+            if prev_price_min_idx is not None and not pd.isna(prev_price_min_idx):
+                if recent_df.loc[price_min_idx, 'Low'] < recent_df.loc[prev_price_min_idx, 'Low'] and \
+                   recent_df.loc[price_min_idx, 'RSI'] > recent_df.loc[prev_price_min_idx, 'RSI']:
+                    div_status, div_score = "دايفرجنس صاعد (Bullish Div)", 1.5
+                    div_detail = "السعر كوّن قاعاً أدنى ومؤشر RSI كوّن قاعاً أعلى."
+
+        price_max_idx = recent_df['High'].idxmax()
+        if price_max_idx != recent_df.index[-1]:
+            prev_price_max_idx = recent_df.loc[:price_max_idx].iloc[:-1]['High'].idxmax()
+            if prev_price_max_idx is not None and not pd.isna(prev_price_max_idx):
+                if recent_df.loc[price_max_idx, 'High'] > recent_df.loc[prev_price_max_idx, 'High'] and \
+                   recent_df.loc[price_max_idx, 'RSI'] < recent_df.loc[prev_price_max_idx, 'RSI']:
+                    div_status, div_score = "دايفرجنس هابط (Bearish Div)", -1.5
+                    div_detail = "السعر كوّن قمة أعلى ومؤشر RSI كوّن قمة أدنى."
+
+        strategies["Divergence"] = {"name": "الدايفرجنس (Divergence)", "status": div_status, "detail": div_detail, "score": div_score}
+        total_score += div_score
+
+        # 4. Elliott
         elliott_status, elliott_score, elliott_detail = "موجة تصحيحية معقدة", 0, "السوق غير واضح هيكلياً."
         if htf_trend == "BULLISH" and len(swing_highs) >= 2 and len(swing_lows) >= 2:
             if swing_highs[-1] > swing_highs[-2] and swing_lows[-1] > swing_lows[-2]:
@@ -194,29 +231,28 @@ class MarketSimulator:
                 elliott_status, elliott_score = "موجة دافعة هابطة (3 أو 5)", -1.0
                 elliott_detail = "قمم وقيعان متنازلة تؤكد الموجة الهابطة."
                 
-        strategies["Elliott"] = {"name": "إليوت (الموجات الهيكلية)", "status": elliott_status, "detail": elliott_detail, "score": elliott_score}
+        strategies["Elliott"] = {"name": "إليوت (الموجات)", "status": elliott_status, "detail": elliott_detail, "score": elliott_score}
         total_score += elliott_score
 
-        # 5. التحليل الفني (RSI + MACD)
+        # 5. Technical
         tech_status, tech_score, tech_detail = "محايد", 0, f"RSI: {last['RSI']:.1f}"
         if last["RSI"] < 40 and last["MACD"] > last["Signal_Line"]:
             tech_status, tech_score = "تشبع بيعي + تقاطع MACD", 1.0
-            tech_detail = f"RSI عند {last['RSI']:.1f} مع تقاطع إيجابي للمؤشرات."
+            tech_detail = f"RSI عند {last['RSI']:.1f} مع تقاطع إيجابي."
         elif last["RSI"] > 60 and last["MACD"] < last["Signal_Line"]:
             tech_status, tech_score = "تشبع شرائي + تقاطع MACD", -1.0
-            tech_detail = f"RSI عند {last['RSI']:.1f} مع تقاطع سلبي للمؤشرات."
+            tech_detail = f"RSI عند {last['RSI']:.1f} مع تقاطع سلبي."
             
         strategies["Technical"] = {"name": "الفني (الزخم)", "status": tech_status, "detail": tech_detail, "score": tech_score}
         total_score += tech_score
 
-        # --- القرار الصارم: يجب توافق الفريمين والاستراتيجيات ---
         action = "WAIT"
-        reason = "الشروط غير مكتملة. النظام يحمي رأس مالك من الدخول العشوائي."
+        reason = "الشروط غير مكتملة. النظام يحمي رأس مالك."
         
-        if htf_trend == "BULLISH" and total_score >= 3.0:
+        if htf_trend == "BULLISH" and total_score >= 3.5:
             action = "BUY"
             reason = "توافق صاعد: الاتجاه العام والاستراتيجيات تدعم الشراء."
-        elif htf_trend == "BEARISH" and total_score <= -3.0:
+        elif htf_trend == "BEARISH" and total_score <= -3.5:
             action = "SELL"
             reason = "توافق هابط: الاتجاه العام والاستراتيجيات تدعم البيع."
 
@@ -233,7 +269,6 @@ class MarketSimulator:
             if position_size < 0.0001:
                 warning_msg = "⚠️ حجم اللوت صغير جداً!"
 
-        # إشعارات التلغرام
         if action != "WAIT" and action != self.last_action:
             self.active_trade = {"action": action, "entry": entry, "sl": sl, "tp": tp}
             msg = f"🚀 <b>إشارة مؤسسية: {self.symbol}</b>\n\n"
@@ -246,7 +281,7 @@ class MarketSimulator:
             msg += f"<b>سبب الدخول:</b>\n{reason}\n"
             msg += f"• SMC: {smc_status}\n"
             msg += f"• ICT: {ict_status}\n"
-            msg += f"• إليوت: {elliott_status}"
+            msg += f"• الدايفرجنس: {div_status}"
             asyncio.create_task(send_telegram_message(msg))
 
         self.last_action = action
@@ -268,7 +303,6 @@ class MarketSimulator:
                     asyncio.create_task(send_telegram_message(f"❌ <b>تم ضرب وقف الخسارة ({self.symbol})</b>\nخسارة: -$5.00"))
                     self.active_trade = None
 
-        # إرسال 5000 شمعة للشارت
         candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df_15m.tail(5000).iterrows()]
 
         return {
@@ -303,21 +337,20 @@ def home():
         <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
         <style>
             * { box-sizing: border-box; margin: 0; padding: 0; }
-            /* تصميم جديد يملأ الشاشة ويجعل الشارت عمالقاً */
             body { font-family: system-ui, sans-serif; background-color: #000; color: #fff; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
-            .header { height: 50px; flex-shrink: 0; background: #050505; border-bottom: 1px solid #141414; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; overflow-x: auto; white-space: nowrap; }
+            /* شريط علوي قابل للتمرير بسلاسة */
+            .header { height: 50px; flex-shrink: 0; background: #050505; border-bottom: 1px solid #141414; display: flex; align-items: center; padding: 0 10px; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+            .header::-webkit-scrollbar { display: none; }
             .header .brand { font-size: 13px; font-weight: bold; margin-left: 10px; color: #38bdf8; }
             .header .menu { display: flex; gap: 6px; }
-            .m-btn { background: #222; color: #fff; border: 1px solid #444; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+            .m-btn { background: #222; color: #fff; border: 1px solid #444; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
             .m-btn.active { background: #444; font-weight: bold; border-color: #888; }
             
             .layout { display: flex; flex: 1; overflow: hidden; flex-direction: column; }
             
-            /* الشارت يأخذ 75% من الشاشة */
             .chart-wrap { flex: 7.5; background: #000; position: relative; width: 100%; border-bottom: 1px solid #222; }
             #chart { width: 100%; height: 100%; }
             
-            /* اللوحة الجانبية (في الأسفل) تأخذ 25% */
             .panel { flex: 2.5; width: 100%; background: #030303; padding: 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
             
             .box { background: #080808; border: 1px solid #161616; padding: 10px; border-radius: 5px; }
@@ -327,7 +360,6 @@ def home():
             .row { display: flex; justify-content: space-between; font-size: 12px; margin-top: 6px; padding-bottom: 3px; border-bottom: 1px solid #111; }
             .val { font-family: monospace; font-weight: bold; }
             
-            /* تصميم تفصيلي للاستراتيجيات */
             .strat-card { background: #0a0a0a; border: 1px solid #222; padding: 8px; border-radius: 4px; margin-bottom: 6px; }
             .strat-title { font-size: 12px; font-weight: bold; color: #eee; margin-bottom: 3px; display: flex; justify-content: space-between; }
             .strat-status { font-size: 11px; margin-bottom: 2px; }
@@ -336,26 +368,31 @@ def home():
             .trend-bull { color: #22c55e; font-weight: bold; }
             .trend-bear { color: #ef4444; font-weight: bold; }
             .warning-box { background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; color: #fca5a5; padding: 6px; border-radius: 4px; font-size: 10px; text-align: center; display: none; margin-top: 4px; }
-            .source-tag { font-size: 9px; color: #666; text-align: center; margin-top: 4px; }
         </style>
     </head>
     <body>
         <div class="header">
-            <div class="brand">PRO MTF ($5 Risk)</div>
+            <div class="brand">PRO MTF</div>
             <div class="menu">
+                <button class="m-btn active" id="btn-BTCUSDT" onclick="switchSymbol('BTCUSDT')">BTC</button>
+                <button class="m-btn" id="btn-ETHUSDT" onclick="switchSymbol('ETHUSDT')">ETH</button>
+                <button class="m-btn" id="btn-SOLUSDT" onclick="switchSymbol('SOLUSDT')">SOL</button>
+                <button class="m-btn" id="btn-BNBUSDT" onclick="switchSymbol('BNBUSDT')">BNB</button>
+                <button class="m-btn" id="btn-XRPUSDT" onclick="switchSymbol('XRPUSDT')">XRP</button>
+                <button class="m-btn" id="btn-XAUUSD" onclick="switchSymbol('XAUUSD')">GOLD</button>
+                <button class="m-btn" id="btn-XAGUSD" onclick="switchSymbol('XAGUSD')">SILVER</button>
+                <button class="m-btn" id="btn-WTIUSD" onclick="switchSymbol('WTIUSD')">OIL</button>
                 <button class="m-btn" id="btn-EURUSD" onclick="switchSymbol('EURUSD')">EUR/USD</button>
                 <button class="m-btn" id="btn-GBPUSD" onclick="switchSymbol('GBPUSD')">GBP/USD</button>
-                <button class="m-btn" id="btn-XAUUSD" onclick="switchSymbol('XAUUSD')">GOLD</button>
-                <button class="m-btn" id="btn-ETHUSDT" onclick="switchSymbol('ETHUSDT')">ETH</button>
-                <button class="m-btn active" id="btn-BTCUSDT" onclick="switchSymbol('BTCUSDT')">BTC</button>
+                <button class="m-btn" id="btn-USDJPY" onclick="switchSymbol('USDJPY')">USD/JPY</button>
+                <button class="m-btn" id="btn-AUDUSD" onclick="switchSymbol('AUDUSD')">AUD/USD</button>
+                <button class="m-btn" id="btn-USDCAD" onclick="switchSymbol('USDCAD')">USD/CAD</button>
             </div>
         </div>
         
         <div class="layout">
-            <!-- الشارت العمالق -->
             <div class="chart-wrap"><div id="chart"></div></div>
             
-            <!-- اللوحة السفلية -->
             <div class="panel">
                 <div class="box" style="text-align:center;">
                     <div style="font-size:10px; color:#888; margin-bottom:4px;">إشارة التداول (تحليل متعدد الأطر)</div>
@@ -405,7 +442,6 @@ def home():
                 fetch('/api/data/' + currentSymbol)
                     .then(res => res.json())
                     .then(data => {
-                        // إرسال 5000 شمعة للشارت
                         series.setData(data.candles);
                         clearLines();
                         
@@ -462,7 +498,6 @@ def home():
                 if (intervalId) clearInterval(intervalId);
                 fetchData();
                 
-                // التكيف مع حجم البيانات الكبير
                 setTimeout(() => chart.timeScale().fitContent(), 200);
                 
                 intervalId = setInterval(fetchData, 2000); 
