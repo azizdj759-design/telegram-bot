@@ -7,7 +7,7 @@ import httpx
 import asyncio
 from datetime import datetime, timedelta
 
-app = FastAPI(title="Ultimate Pro Signal Engine", version="35.0")
+app = FastAPI(title="Ultimate Pro Signal Engine", version="37.0")
 
 TELEGRAM_TOKEN = "8741070555:AAGf6ys8UH8TZwlQpy_vWff9YONZ9BDmOok"
 
@@ -42,11 +42,6 @@ async def send_telegram_message(message: str):
                 pass
     return True
 
-@app.get("/subscribers")
-async def get_subscribers():
-    await sync_subscribers()
-    return {"subscribers_count": len(SUBSCRIBERS)}
-
 engines = {}
 
 class MarketSimulator:
@@ -54,10 +49,10 @@ class MarketSimulator:
         self.symbol = symbol
         self.risk_usd = risk_usd
         self.tick_count = 0
-        self.active_trade = None
+        self.active_trade = None # لحفظ الصفقة المفتوحة
         self.last_action = "WAIT"
         
-        # إعدادات الأصول الجديدة (محاكاة دقيقة لأسعار Exness)
+        # الأسعار الأساسية (محاكاة)
         if symbol == "BTCUSDT": self.base_price, self.volatility, self.decimals = 65000.0, 150.0, 2
         elif symbol == "ETHUSDT": self.base_price, self.volatility, self.decimals = 3500.0, 15.0, 2
         elif symbol == "SOLUSDT": self.base_price, self.volatility, self.decimals = 150.0, 2.5, 2
@@ -70,7 +65,7 @@ class MarketSimulator:
         elif symbol == "USDJPY": self.base_price, self.volatility, self.decimals = 155.000, 0.25, 3
         elif symbol == "AUDUSD": self.base_price, self.volatility, self.decimals = 0.66000, 0.0012, 5
         elif symbol == "USDCAD": self.base_price, self.volatility, self.decimals = 1.37000, 0.0014, 5
-        else: self.base_price, self.volatility, self.decimals = 78.0, 0.8, 2 # WTI
+        else: self.base_price, self.volatility, self.decimals = 78.0, 0.8, 2
 
         self.current_price = self.base_price
         self.df_15m = self._generate_historical_data(5200)
@@ -151,7 +146,6 @@ class MarketSimulator:
         strategies = {}
         total_score = 0
 
-        # 1. SMC (BOS, CHoCH, Sweeps)
         swing_highs = df_15m[df_15m["Swing_High"]]["High"].tail(3).values
         swing_lows = df_15m[df_15m["Swing_Low"]]["Low"].tail(3).values
         
@@ -181,7 +175,6 @@ class MarketSimulator:
         strategies["SMC"] = {"name": "SMC (الهيكل والسيولة)", "status": smc_status, "detail": smc_detail, "score": smc_score}
         total_score += smc_score
 
-        # 2. ICT (FVG)
         fvg_bull = df_15m["Low"] > df_15m["High"].shift(2)
         fvg_bear = df_15m["High"] < df_15m["Low"].shift(2)
         
@@ -196,7 +189,6 @@ class MarketSimulator:
         strategies["ICT"] = {"name": "ICT (الفجوات السعرية)", "status": ict_status, "detail": ict_detail, "score": ict_score}
         total_score += ict_score
 
-        # 3. RSI Divergence
         div_status, div_score, div_detail = "لا يوجد دايفرجنس", 0, "لا يوجد تباعد بين السعر والمؤشر."
         recent_df = df_15m.tail(30)
         price_min_idx = recent_df['Low'].idxmin()
@@ -220,7 +212,6 @@ class MarketSimulator:
         strategies["Divergence"] = {"name": "الدايفرجنس (Divergence)", "status": div_status, "detail": div_detail, "score": div_score}
         total_score += div_score
 
-        # 4. Elliott
         elliott_status, elliott_score, elliott_detail = "موجة تصحيحية معقدة", 0, "السوق غير واضح هيكلياً."
         if htf_trend == "BULLISH" and len(swing_highs) >= 2 and len(swing_lows) >= 2:
             if swing_highs[-1] > swing_highs[-2] and swing_lows[-1] > swing_lows[-2]:
@@ -234,7 +225,6 @@ class MarketSimulator:
         strategies["Elliott"] = {"name": "إليوت (الموجات)", "status": elliott_status, "detail": elliott_detail, "score": elliott_score}
         total_score += elliott_score
 
-        # 5. Technical
         tech_status, tech_score, tech_detail = "محايد", 0, f"RSI: {last['RSI']:.1f}"
         if last["RSI"] < 40 and last["MACD"] > last["Signal_Line"]:
             tech_status, tech_score = "تشبع بيعي + تقاطع MACD", 1.0
@@ -247,14 +237,16 @@ class MarketSimulator:
         total_score += tech_score
 
         action = "WAIT"
-        reason = "الشروط غير مكتملة. النظام يحمي رأس مالك."
+        reason = "لا توجد صفقة نشطة حالياً. الشروط غير مكتملة."
         
-        if htf_trend == "BULLISH" and total_score >= 3.5:
-            action = "BUY"
-            reason = "توافق صاعد: الاتجاه العام والاستراتيجيات تدعم الشراء."
-        elif htf_trend == "BEARISH" and total_score <= -3.5:
-            action = "SELL"
-            reason = "توافق هابط: الاتجاه العام والاستراتيجيات تدعم البيع."
+        # إذا كانت هناك صفقة مفتوحة، لا نبحث عن صفقة جديدة
+        if self.active_trade is None:
+            if htf_trend == "BULLISH" and total_score >= 3.5:
+                action = "BUY"
+                reason = "توافق صاعد: الاتجاه العام والاستراتيجيات تدعم الشراء."
+            elif htf_trend == "BEARISH" and total_score <= -3.5:
+                action = "SELL"
+                reason = "توافق هابط: الاتجاه العام والاستراتيجيات تدعم البيع."
 
         def clean(v): return 0.0 if pd.isna(v) or math.isinf(v) else round(float(v), self.decimals)
 
@@ -265,27 +257,33 @@ class MarketSimulator:
             entry = clean(price)
             sl = clean(entry - sl_dist if action == "BUY" else entry + sl_dist)
             tp = clean(entry + (3.0 * atr) if action == "BUY" else entry - (3.0 * atr))
-            position_size = round(self.risk_usd / sl_dist, 4)
-            if position_size < 0.0001:
-                warning_msg = "⚠️ حجم اللوت صغير جداً!"
+            
+            if "USD" in self.symbol and "USDT" not in self.symbol: 
+                position_size = round((self.risk_usd / sl_dist) / 100000, 2) 
+            else:
+                position_size = round(self.risk_usd / sl_dist, 4)
 
-        if action != "WAIT" and action != self.last_action:
+            if position_size < 0.01 and "USD" in self.symbol:
+                warning_msg = "⚠️ حجم اللوت صغير جداً! قد يرفضه البروكر."
+
+        # --- إرسال الإشعار إذا كانت إشارة جديدة ---
+        if action != "WAIT":
             self.active_trade = {"action": action, "entry": entry, "sl": sl, "tp": tp}
             msg = f"🚀 <b>إشارة مؤسسية: {self.symbol}</b>\n\n"
             msg += f"الاتجاه: {action}\n"
             msg += f"سعر الدخول: {entry}\n"
             msg += f"وقف الخسارة (SL): {sl}\n"
             msg += f"الهدف (TP): {tp}\n"
-            msg += f"حجم المركز: {position_size}\n"
+            msg += f"<b>حجم اللوت: {position_size} Lots</b>\n"
             msg += f"الخسارة القصوى: $5.00\n\n"
+            msg += f"<b>ملاحظة هامة:</b> هذه إشارة من محاكي، طابق الاتجاه والأرقام مع منصتك.\n\n"
             msg += f"<b>سبب الدخول:</b>\n{reason}\n"
             msg += f"• SMC: {smc_status}\n"
             msg += f"• ICT: {ict_status}\n"
             msg += f"• الدايفرجنس: {div_status}"
             asyncio.create_task(send_telegram_message(msg))
 
-        self.last_action = action
-
+        # --- مراقبة الصفقة المفتوحة (هل ضربت الهدف أو الخسارة؟) ---
         if self.active_trade:
             t = self.active_trade
             if t["action"] == "BUY":
@@ -308,6 +306,7 @@ class MarketSimulator:
         return {
             "status": "ok", "current_price": clean(price), "action": action, "htf_trend": htf_trend, "reason": reason,
             "levels": {"entry": entry, "sl": sl, "tp": tp},
+            "active_trade": self.active_trade, # <--- تمت إضافة هذا المتغير هنا
             "position_size": position_size, "warning": warning_msg, 
             "strategies": list(strategies.values()), "candles": candles,
             "source": "MTF Deep Simulator (Exness)"
@@ -338,7 +337,6 @@ def home():
         <style>
             * { box-sizing: border-box; margin: 0; padding: 0; }
             body { font-family: system-ui, sans-serif; background-color: #000; color: #fff; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
-            /* شريط علوي قابل للتمرير بسلاسة */
             .header { height: 50px; flex-shrink: 0; background: #050505; border-bottom: 1px solid #141414; display: flex; align-items: center; padding: 0 10px; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
             .header::-webkit-scrollbar { display: none; }
             .header .brand { font-size: 13px; font-weight: bold; margin-left: 10px; color: #38bdf8; }
@@ -446,20 +444,49 @@ def home():
                         clearLines();
                         
                         const badge = document.getElementById('signal-badge');
-                        badge.innerText = data.action === 'BUY' ? 'STRONG BUY' : data.action === 'SELL' ? 'STRONG SELL' : 'WAIT';
-                        badge.className = data.action === 'BUY' ? 'badge-buy' : data.action === 'SELL' ? 'badge-sell' : 'badge-wait';
-                        
-                        document.getElementById('reason-text').innerText = data.reason;
+                        const reasonText = document.getElementById('reason-text');
+                        const entryEl = document.getElementById('p-entry');
+                        const slEl = document.getElementById('p-sl');
+                        const tpEl = document.getElementById('p-tp');
+
+                        // إذا كان هناك صفقة نشطة (Active Trade)
+                        if (data.active_trade) {
+                            let t = data.active_trade;
+                            badge.innerText = (t.action === 'BUY' ? 'BUY' : 'SELL') + ' (ACTIVE)';
+                            badge.className = t.action === 'BUY' ? 'badge-buy' : 'badge-sell';
+                            reasonText.innerText = "هناك صفقة نشطة حالياً، بانتظار ضرب الهدف أو وقف الخسارة.";
+                            
+                            entryEl.innerText = t.entry;
+                            slEl.innerText = t.sl;
+                            tpEl.innerText = t.tp;
+
+                            activeLines.push(series.createPriceLine({ price: t.entry, color: '#38bdf8', lineWidth: 2, title: 'ENTRY' }));
+                            activeLines.push(series.createPriceLine({ price: t.sl, color: '#ef4444', lineWidth: 2, title: 'SL' }));
+                            activeLines.push(series.createPriceLine({ price: t.tp, color: '#22c55e', lineWidth: 2, title: 'TP' }));
+                        } 
+                        // إذا لا توجد صفقة نشطة (Wait)
+                        else {
+                            badge.innerText = data.action === 'BUY' ? 'STRONG BUY' : data.action === 'SELL' ? 'STRONG SELL' : 'WAIT';
+                            badge.className = data.action === 'BUY' ? 'badge-buy' : data.action === 'SELL' ? 'badge-sell' : 'badge-wait';
+                            reasonText.innerText = data.reason;
+                            
+                            entryEl.innerText = data.levels.entry;
+                            slEl.innerText = data.levels.sl;
+                            tpEl.innerText = data.levels.tp;
+                            
+                            if (data.action !== 'WAIT') {
+                                activeLines.push(series.createPriceLine({ price: data.levels.entry, color: '#38bdf8', lineWidth: 2, title: 'ENTRY' }));
+                                activeLines.push(series.createPriceLine({ price: data.levels.sl, color: '#ef4444', lineWidth: 2, title: 'SL' }));
+                                activeLines.push(series.createPriceLine({ price: data.levels.tp, color: '#22c55e', lineWidth: 2, title: 'TP' }));
+                            }
+                        }
 
                         const trendEl = document.getElementById('htf-trend');
                         trendEl.innerText = data.htf_trend === 'BULLISH' ? 'صاعد (1H)' : 'هابط (1H)';
                         trendEl.className = data.htf_trend === 'BULLISH' ? 'trend-bull' : 'trend-bear';
 
-                        document.getElementById('pos-size').innerText = data.position_size;
+                        document.getElementById('pos-size').innerText = data.position_size + " Lots";
                         document.getElementById('p-live').innerText = data.current_price;
-                        document.getElementById('p-entry').innerText = data.levels.entry;
-                        document.getElementById('p-sl').innerText = data.levels.sl;
-                        document.getElementById('p-tp').innerText = data.levels.tp;
                         
                         const warnBox = document.getElementById('warn-box');
                         warnBox.style.display = data.warning ? 'block' : 'none';
@@ -479,12 +506,6 @@ def home():
                             </div>`;
                         });
                         document.getElementById('strategies-container').innerHTML = stratHtml;
-                        
-                        if (data.action !== 'WAIT') {
-                            activeLines.push(series.createPriceLine({ price: data.levels.entry, color: '#38bdf8', lineWidth: 2, title: 'ENTRY' }));
-                            activeLines.push(series.createPriceLine({ price: data.levels.sl, color: '#ef4444', lineWidth: 2, title: 'SL' }));
-                            activeLines.push(series.createPriceLine({ price: data.levels.tp, color: '#22c55e', lineWidth: 2, title: 'TP' }));
-                        }
                     })
                     .catch(err => console.error(err));
             }
