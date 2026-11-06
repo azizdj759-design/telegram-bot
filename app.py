@@ -31,9 +31,10 @@ class SignalEngine:
         }
 
     def fetch_historical_data(self):
-        """جلب البيانات في مسار منفصل (Sync) لتجنب تجميد الـ WebSocket"""
+        """جلب البيانات مع تحديد مهلة زمنية والانتقال الفوري للمحاكاة عند أي ضغط أو حظر شبكة"""
         ccxt_sym = self.ccxt_symbols.get(self.symbol, "BTC/USDT")
         try:
+            self.exchange.timeout = 5000  # مهلة 5 ثوانٍ لعدم تعليق الاتصال
             ohlcv = self.exchange.fetch_ohlcv(ccxt_sym, timeframe='15m', limit=300)
             if ohlcv:
                 df = pd.DataFrame(ohlcv, columns=['time', 'Open', 'High', 'Low', 'Close', 'Volume'])
@@ -43,8 +44,9 @@ class SignalEngine:
                 self.source = f"Binance (ccxt) - {ccxt_sym}"
                 return True
         except Exception as e:
-            print(f"Error fetching {ccxt_sym}: {e}")
+            print(f"Network/Exchange Error for {ccxt_sym}: {e}")
 
+        # خطة الطوارئ والمحاكاة لضمان عمل الشارت فوراً ودون توقف
         return self.generate_fallback_data()
 
     def generate_fallback_data(self):
