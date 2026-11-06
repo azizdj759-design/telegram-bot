@@ -7,59 +7,43 @@ import json
 import websockets
 import httpx
 
-app = FastAPI(title="Super Institutional Signal Engine", version="14.0")
+app = FastAPI(title="Super Institutional Signal Engine", version="15.0")
 
 class SuperSignalEngine:
-    def __init__(self, symbol="BTCUSDT", account_balance=30.0, risk_pct=0.01):
+    def __init__(self, symbol="BTC_USDT", account_balance=30.0, risk_pct=0.01):
+        # WhiteBIT تستخدم صيغة BTC_USDT بدلاً من BTCUSDT
         self.symbol = symbol
         self.balance = account_balance
         self.risk_pct = risk_pct
         self.df = pd.DataFrame()
         
     async def fetch_historical_data(self):
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        # جلب البيانات التاريخية من WhiteBIT (لا يوجد حظر لخوادم Render)
+        url = f"https://whitebit.com/api/v4/public/kline?market={self.symbol}&interval=15m&limit=300"
         
-        # 1. المحاولة الأولى: Binance
-        url_binance = f"https://data-api.binance.vision/api/v3/klines?symbol={self.symbol}&interval=15m&limit=300"
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             try:
-                response = await client.get(url_binance, headers=headers)
-                if response.status_code == 200:
-                    data = response.json()
-                    df = pd.DataFrame(data).iloc[:, :6]
-                    df.columns = ['time', 'Open', 'High', 'Low', 'Close', 'Volume']
-                    df['time'] = pd.to_datetime(df['time'], unit='ms')
-                    df.set_index('time', inplace=True)
-                    self.df = df.astype(float)
-                    return
-            except Exception:
-                pass # الانتقال للمصدر البديل
-
-            # 2. المحاولة الثانية (البديلة): Bybit (لا تحظر Render)
-            url_bybit = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={self.symbol}&interval=15&limit=300"
-            try:
-                response = await client.get(url_bybit, headers=headers)
+                response = await client.get(url)
                 response.raise_for_status()
                 data = response.json()
-                if data.get("retCode") == 0:
-                    klines = data["result"]["list"]
-                    # Bybit ترجع البيانات من الأحدث للأقدم، نقوم بعكسها
-                    klines.reverse()
-                    df = pd.DataFrame(klines)
-                    df = df.iloc[:, :6]
-                    df.columns = ['time', 'Open', 'High', 'Low', 'Close', 'Volume']
-                    df['time'] = pd.to_datetime(df['time'].astype(float), unit='ms')
-                    df.set_index('time', inplace=True)
-                    # تحويل النصوص إلى أرقام عشرية
-                    self.df = df.astype(float)
+                
+                # WhiteBIT ترجع البيانات كمصفوفة: [timestamp, open, close, high, low, volume]
+                df = pd.DataFrame(data, columns=['time', 'Open', 'Close', 'High', 'Low', 'Volume'])
+                df['time'] = pd.to_datetime(df['time'], unit='s')
+                df.set_index('time', inplace=True)
+                # إعادة ترتيب الأعمدة لتطابق التنسيق المطلوب
+                self.df = df[['Open', 'High', 'Low', 'Close', 'Volume']].astype(float)
+                
             except Exception as e:
-                raise Exception(f"فشل جلب البيانات من جميع المصادر: {e}")
+                raise Exception(f"فشل جلب البيانات من WhiteBIT: {e}")
 
-    def update_live_data(self, kline):
+    def update_live_data(self, kline_data):
+        # تحديث الشمعة الحالية من البث اللحظي
         new_row = pd.DataFrame([{
-            "Open": float(kline['o']), "High": float(kline['h']),
-            "Low": float(kline['l']), "Close": float(kline['c']), "Volume": float(kline['v'])
-        }], index=[pd.to_datetime(kline['t'], unit='ms')])
+            "Open": float(kline_data['open']), "High": float(kline_data['high']),
+            "Low": float(kline_data['low']), "Close": float(kline_data['close']), 
+            "Volume": float(kline_data['volume'])
+        }], index=[pd.to_datetime(kline_data['time'], unit='s')])
         
         if not self.df.empty and self.df.index[-1] == new_row.index[0]:
             self.df.iloc[-1] = new_row.iloc[0]
@@ -176,26 +160,40 @@ class SuperSignalEngine:
 @app.websocket("/ws/{symbol}")
 async def websocket_endpoint(websocket: WebSocket, symbol: str):
     await websocket.accept()
-    engine = SuperSignalEngine(symbol=symbol, account_balance=30.0, risk_pct=0.01)
+    # تحويل الرمز من BTCUSDT إلى BTC_USDT
+    wb_symbol = symbol.replace("USDT", "_USDT")
+    engine = SuperSignalEngine(symbol=wb_symbol, account_balance=30.0, risk_pct=0.01)
     
     try:
-        # جلب البيانات وإرسالها
+        # 1. جلب البيانات التاريخية
         await engine.fetch_historical_data()
         initial_result = engine.analyze_strategies()
         if initial_result:
             await websocket.send_text(json.dumps(initial_result))
         
-        # البث اللحظي
-        binance_url = f"wss://stream.binance.com:443/ws/{symbol.lower()}@kline_15m"
-        async with websockets.connect(binance_url) as binance_ws:
+        # 2. البث اللحظي من WhiteBIT
+        # WhiteBIT WebSocket: wss://api.whitebit.com/ws
+        async with websockets.connect("wss://api.whitebit.com/ws") as wb_ws:
+            # الاشتراك في قناة kline لفريم 15 دقيقة
+            subscribe_msg = {
+                "method": "kline_subscribe",
+                "params": [wb_symbol, "15m"],
+                "id": 1
+            }
+            await wb_ws.send(json.dumps(subscribe_msg))
+            
             while True:
-                msg = await binance_ws.recv()
+                msg = await wb_ws.recv()
                 data = json.loads(msg)
-                engine.update_live_data(data['k'])
                 
-                result = engine.analyze_strategies()
-                if result:
-                    await websocket.send_text(json.dumps(result))
+                # التحقق من أن الرسالة هي تحديث شمعة
+                if "params" in data and data.get("method") == "kline_update":
+                    kline = data["params"][0]
+                    engine.update_live_data(kline)
+                    
+                    result = engine.analyze_strategies()
+                    if result:
+                        await websocket.send_text(json.dumps(result))
                 
     except Exception as e:
         error_msg = json.dumps({"status": "error", "message": f"خطأ: {str(e)}"})
