@@ -6,3 +6,4 @@ httpx==0.25.1
 yfinance==0.2.33
 tvdatafeed==2.1.0
 websocket-client==1.7.0
+ccxt==4.1.22
