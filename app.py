@@ -7,7 +7,7 @@ import httpx
 import asyncio
 from datetime import datetime, timedelta
 
-app = FastAPI(title="Ultimate Pro Signal Engine", version="38.0")
+app = FastAPI(title="Ultimate Pro Signal Engine", version="39.0")
 
 TELEGRAM_TOKEN = "8741070555:AAGf6ys8UH8TZwlQpy_vWff9YONZ9BDmOok"
 
@@ -50,6 +50,10 @@ class MarketSimulator:
         self.tick_count = 0
         self.active_trade = None 
         
+        # إعدادات فريدة لكل عملة (الأسعار، التقلب، الاتجاه العام)
+        # نستخدم hash(symbol) لضمان أن كل عملة لها مسار عشوائي مختلف تماماً
+        np.random.seed(sum([ord(c) for c in symbol]))
+        
         if symbol == "BTCUSDT": self.base_price, self.volatility, self.decimals = 65000.0, 150.0, 2
         elif symbol == "ETHUSDT": self.base_price, self.volatility, self.decimals = 3500.0, 15.0, 2
         elif symbol == "SOLUSDT": self.base_price, self.volatility, self.decimals = 150.0, 2.5, 2
@@ -70,9 +74,13 @@ class MarketSimulator:
     def _generate_historical_data(self, length):
         dates = [datetime.now() - timedelta(minutes=15*i) for i in range(length)]
         dates.reverse()
+        
+        # إضافة اتجاه عام (Drift) مختلف لكل عملة
+        drift = (np.random.rand() - 0.5) * self.volatility * 0.1
+        
         prices = [self.base_price]
         for _ in range(length - 1):
-            change = np.random.normal(0, self.volatility)
+            change = np.random.normal(drift, self.volatility)
             prices.append(prices[-1] + change)
             
         df = pd.DataFrame(index=dates)
@@ -128,44 +136,22 @@ class MarketSimulator:
         return df
 
     def calculate_pnl_and_pips(self, sl_dist, tp_dist):
-        """حساب النقاط (Pips) وقيمة الخسارة/الربح بالدولار لحجم 0.01 لوت"""
         lot_size = 0.01
-        
         if self.symbol in ["EURUSD", "GBPUSD", "AUDUSD", "USDCAD"]:
-            # أزواج الفوركس (4 خانات عشرية): النقطة = 0.0001. قيمة النقطة لـ 0.01 لوت = $0.10
-            sl_pips = round(sl_dist / 0.0001)
-            tp_pips = round(tp_dist / 0.0001)
-            loss_usd = sl_pips * 0.10
-            profit_usd = tp_pips * 0.10
-            
+            sl_pips = round(sl_dist / 0.0001); tp_pips = round(tp_dist / 0.0001)
+            loss_usd = sl_pips * 0.10; profit_usd = tp_pips * 0.10
         elif self.symbol == "USDJPY":
-            # أزواج الين: النقطة = 0.01
-            sl_pips = round(sl_dist / 0.01)
-            tp_pips = round(tp_dist / 0.01)
-            loss_usd = sl_pips * 0.10
-            profit_usd = tp_pips * 0.10
-            
+            sl_pips = round(sl_dist / 0.01); tp_pips = round(tp_dist / 0.01)
+            loss_usd = sl_pips * 0.10; profit_usd = tp_pips * 0.10
         elif self.symbol == "XAUUSD":
-            # الذهب: حركة 0.1 نقطة. لـ 0.01 لوت، حركة دولار واحد = ربح/خسارة 1 دولار
-            sl_pips = round(sl_dist * 10)
-            tp_pips = round(tp_dist * 10)
-            loss_usd = sl_dist * 1.0  # 1 دولار حركة سعرية = 1 دولار خسارة
-            profit_usd = tp_dist * 1.0
-            
+            sl_pips = round(sl_dist * 10); tp_pips = round(tp_dist * 10)
+            loss_usd = sl_dist * 1.0; profit_usd = tp_dist * 1.0
         elif self.symbol == "XAGUSD":
-            # الفضة: حركة 0.01 نقطة. لـ 0.01 لوت، حركة 1 سنت = $0.50
-            sl_pips = round(sl_dist * 100)
-            tp_pips = round(tp_dist * 100)
-            loss_usd = sl_dist * 50.0
-            profit_usd = tp_dist * 50.0
-            
+            sl_pips = round(sl_dist * 100); tp_pips = round(tp_dist * 100)
+            loss_usd = sl_dist * 50.0; profit_usd = tp_dist * 50.0
         else:
-            # الكريبتو (مباشر بالدولار)
-            sl_pips = "---" # لا ينطبق
-            tp_pips = "---"
-            loss_usd = sl_dist * lot_size
-            profit_usd = tp_dist * lot_size
-
+            sl_pips = "---"; tp_pips = "---"
+            loss_usd = sl_dist * lot_size; profit_usd = tp_dist * lot_size
         return sl_pips, tp_pips, round(loss_usd, 2), round(profit_usd, 2)
 
     def analyze(self):
@@ -183,30 +169,31 @@ class MarketSimulator:
 
         strategies = {}
         total_score = 0
+        smc_strong = False # شرط إجباري
 
         swing_highs = df_15m[df_15m["Swing_High"]]["High"].tail(3).values
         swing_lows = df_15m[df_15m["Swing_Low"]]["Low"].tail(3).values
         
         smc_status, smc_score, smc_detail = "لا يوجد كسر هيكل", 0, "السعر يتحرك داخل نطاق عرضي."
         if len(swing_highs) > 0 and price > swing_highs[-1]:
+            smc_strong = True
             if htf_trend == "BEARISH":
                 smc_status, smc_score = "تغيير شخصية صاعد (CHoCH)", 2.5
-                smc_detail = f"اختراق قمة هابطة سابقة عند {swing_highs[-1]:.{self.decimals}f}."
             else:
                 smc_status, smc_score = "كسر هيكل صاعد (BOS)", 2.0
-                smc_detail = f"تم اختراق القمة السابقة عند {swing_highs[-1]:.{self.decimals}f}."
         elif len(swing_lows) > 0 and price < swing_lows[-1]:
+            smc_strong = True
             if htf_trend == "BULLISH":
                 smc_status, smc_score = "تغيير شخصية هابط (CHoCH)", -2.5
-                smc_detail = f"اختراق قاع صاعد سابق عند {swing_lows[-1]:.{self.decimals}f}."
             else:
                 smc_status, smc_score = "كسر هيكل هابط (BOS)", -2.0
-                smc_detail = f"تم اختراق القاع السابق عند {swing_lows[-1]:.{self.decimals}f}."
 
         if len(swing_lows) > 0 and prev["Low"] < swing_lows[-1] and prev["Close"] > swing_lows[-1]:
+            smc_strong = True
             smc_status, smc_score = "اصطياد سيولة شرائية (Sweep)", 3.0
             smc_detail = "السعر كسر قاعاً وهمياً وأغلق فوقه (انعكاس قوي)."
         elif len(swing_highs) > 0 and prev["High"] > swing_highs[-1] and prev["Close"] < swing_highs[-1]:
+            smc_strong = True
             smc_status, smc_score = "اصطياد سيولة بيعية (Sweep)", -3.0
             smc_detail = "السعر كسر قمة وهمية وأغلق تحتها (انعكاس قوي)."
 
@@ -215,138 +202,111 @@ class MarketSimulator:
 
         fvg_bull = df_15m["Low"] > df_15m["High"].shift(2)
         fvg_bear = df_15m["High"] < df_15m["Low"].shift(2)
-        
         ict_status, ict_score, ict_detail = "لا توجد فجوات سعرية", 0, "لم يتم اكتشاف فجوات قريبة."
         if fvg_bull.tail(10).any():
             ict_status, ict_score = "فجوة صاعدة (Bullish FVG)", 1.5
-            ict_detail = "يوجد فجوة سعرية غير مغلقة تدعم الصعود."
         elif fvg_bear.tail(10).any():
             ict_status, ict_score = "فجوة هابطة (Bearish FVG)", -1.5
-            ict_detail = "يوجد فجوة سعرية غير مغلقة تدعم الهبوط."
-            
-        strategies["ICT"] = {"name": "ICT (الفجوات السعرية)", "status": ict_status, "detail": ict_detail, "score": ict_score}
+        strategies["ICT"] = {"name": "ICT (الفجوات)", "status": ict_status, "detail": ict_detail, "score": ict_score}
         total_score += ict_score
 
-        div_status, div_score, div_detail = "لا يوجد دايفرجنس", 0, "لا يوجد تباعد بين السعر والمؤشر."
+        div_status, div_score, div_detail = "لا يوجد دايفرجنس", 0, "لا يوجد تباعد."
         recent_df = df_15m.tail(30)
         price_min_idx = recent_df['Low'].idxmin()
         if price_min_idx != recent_df.index[-1]:
-            prev_price_min_idx = recent_df.loc[:price_min_idx].iloc[:-1]['Low'].idxmin()
-            if prev_price_min_idx is not None and not pd.isna(prev_price_min_idx):
-                if recent_df.loc[price_min_idx, 'Low'] < recent_df.loc[prev_price_min_idx, 'Low'] and \
-                   recent_df.loc[price_min_idx, 'RSI'] > recent_df.loc[prev_price_min_idx, 'RSI']:
-                    div_status, div_score = "دايفرجنس صاعد (Bullish Div)", 1.5
-                    div_detail = "السعر كوّن قاعاً أدنى ومؤشر RSI كوّن قاعاً أعلى."
-
+            prev_min_idx = recent_df.loc[:price_min_idx].iloc[:-1]['Low'].idxmin()
+            if prev_min_idx is not None and not pd.isna(prev_min_idx):
+                if recent_df.loc[price_min_idx, 'Low'] < recent_df.loc[prev_min_idx, 'Low'] and recent_df.loc[price_min_idx, 'RSI'] > recent_df.loc[prev_min_idx, 'RSI']:
+                    div_status, div_score = "دايفرجنس صاعد", 1.5
         price_max_idx = recent_df['High'].idxmax()
         if price_max_idx != recent_df.index[-1]:
-            prev_price_max_idx = recent_df.loc[:price_max_idx].iloc[:-1]['High'].idxmax()
-            if prev_price_max_idx is not None and not pd.isna(prev_price_max_idx):
-                if recent_df.loc[price_max_idx, 'High'] > recent_df.loc[prev_price_max_idx, 'High'] and \
-                   recent_df.loc[price_max_idx, 'RSI'] < recent_df.loc[prev_price_max_idx, 'RSI']:
-                    div_status, div_score = "دايفرجنس هابط (Bearish Div)", -1.5
-                    div_detail = "السعر كوّن قمة أعلى ومؤشر RSI كوّن قمة أدنى."
-
-        strategies["Divergence"] = {"name": "الدايفرجنس (Divergence)", "status": div_status, "detail": div_detail, "score": div_score}
+            prev_max_idx = recent_df.loc[:price_max_idx].iloc[:-1]['High'].idxmax()
+            if prev_max_idx is not None and not pd.isna(prev_max_idx):
+                if recent_df.loc[price_max_idx, 'High'] > recent_df.loc[prev_max_idx, 'High'] and recent_df.loc[price_max_idx, 'RSI'] < recent_df.loc[prev_max_idx, 'RSI']:
+                    div_status, div_score = "دايفرجنس هابط", -1.5
+        strategies["Divergence"] = {"name": "الدايفرجنس", "status": div_status, "detail": div_detail, "score": div_score}
         total_score += div_score
 
-        elliott_status, elliott_score, elliott_detail = "موجة تصحيحية معقدة", 0, "السوق غير واضح هيكلياً."
+        elliott_status, elliott_score = "موجة تصحيحية", 0
         if htf_trend == "BULLISH" and len(swing_highs) >= 2 and len(swing_lows) >= 2:
             if swing_highs[-1] > swing_highs[-2] and swing_lows[-1] > swing_lows[-2]:
-                elliott_status, elliott_score = "موجة دافعة صاعدة (3 أو 5)", 1.0
-                elliott_detail = "قمم وقيعان متصاعدة تؤكد الموجة الصاعدة."
+                elliott_status, elliott_score = "موجة دافعة صاعدة", 1.0
         elif htf_trend == "BEARISH" and len(swing_highs) >= 2 and len(swing_lows) >= 2:
             if swing_highs[-1] < swing_highs[-2] and swing_lows[-1] < swing_lows[-2]:
-                elliott_status, elliott_score = "موجة دافعة هابطة (3 أو 5)", -1.0
-                elliott_detail = "قمم وقيعان متنازلة تؤكد الموجة الهابطة."
-                
-        strategies["Elliott"] = {"name": "إليوت (الموجات)", "status": elliott_status, "detail": elliott_detail, "score": elliott_score}
+                elliott_status, elliott_score = "موجة دافعة هابطة", -1.0
+        strategies["Elliott"] = {"name": "إليوت", "status": elliott_status, "detail": "", "score": elliott_score}
         total_score += elliott_score
 
-        tech_status, tech_score, tech_detail = "محايد", 0, f"RSI: {last['RSI']:.1f}"
+        tech_status, tech_score = "محايد", 0
         if last["RSI"] < 40 and last["MACD"] > last["Signal_Line"]:
-            tech_status, tech_score = "تشبع بيعي + تقاطع MACD", 1.0
-            tech_detail = f"RSI عند {last['RSI']:.1f} مع تقاطع إيجابي."
+            tech_status, tech_score = "تشبع بيعي", 1.0
         elif last["RSI"] > 60 and last["MACD"] < last["Signal_Line"]:
-            tech_status, tech_score = "تشبع شرائي + تقاطع MACD", -1.0
-            tech_detail = f"RSI عند {last['RSI']:.1f} مع تقاطع سلبي."
-            
-        strategies["Technical"] = {"name": "الفني (الزخم)", "status": tech_status, "detail": tech_detail, "score": tech_score}
+            tech_status, tech_score = "تشبع شرائي", -1.0
+        strategies["Technical"] = {"name": "الفني", "status": tech_status, "detail": "", "score": tech_score}
         total_score += tech_score
 
         action = "WAIT"
-        reason = "لا توجد صفقة نشطة حالياً. الشروط غير مكتملة."
+        reason = "لا توجد صفقة نشطة. الشروط غير مكتملة."
         
-        if self.active_trade is None:
-            if htf_trend == "BULLISH" and total_score >= 3.5:
+        # --- شروط الدخول الصارمة: عتبة 4.0 + يجب أن تكون SMC قوية (BOS أو Sweep أو CHoCH) ---
+        if self.active_trade is None and smc_strong:
+            if htf_trend == "BULLISH" and total_score >= 4.0:
                 action = "BUY"
-                reason = "توافق صاعد: الاتجاه العام والاستراتيجيات تدعم الشراء."
-            elif htf_trend == "BEARISH" and total_score <= -3.5:
+                reason = "توافق صاعد قوي (تجاوز العتبة الصارمة)."
+            elif htf_trend == "BEARISH" and total_score <= -4.0:
                 action = "SELL"
-                reason = "توافق هابط: الاتجاه العام والاستراتيجيات تدعم البيع."
+                reason = "توافق هابط قوي (تجاوز العتبة الصارمة)."
 
         def clean(v): return 0.0 if pd.isna(v) or math.isinf(v) else round(float(v), self.decimals)
 
-        # حساب مسافات ATR
         sl_dist = 1.5 * atr
         tp_dist = 3.0 * atr
-        
-        # حساب النقاط والدولار (بناءً على حجم 0.01 لوت)
         sl_pips, tp_pips, loss_usd, profit_usd = self.calculate_pnl_and_pips(sl_dist, tp_dist)
 
         entry, sl, tp = 0, 0, 0
-        
         if action != "WAIT" and sl_dist > 0:
             entry = clean(price)
             sl = clean(entry - sl_dist if action == "BUY" else entry + sl_dist)
             tp = clean(entry + tp_dist if action == "BUY" else entry - tp_dist)
 
-        # --- إرسال الإشعار إذا كانت إشارة جديدة ---
         if action != "WAIT":
-            self.active_trade = {"action": action, "entry": entry, "sl": sl, "tp": tp}
+            self.active_trade = {"action": action, "entry": entry, "sl": sl, "tp": tp, "loss_usd": loss_usd, "profit_usd": profit_usd}
             msg = f"🚀 <b>إشارة مؤسسية: {self.symbol}</b>\n\n"
             msg += f"الاتجاه: {action}\n"
             msg += f"سعر الدخول: {entry}\n"
-            
             msg += f"<b>وقف الخسارة (SL):</b> {sl}\n"
             msg += f"<i>(خسارة: {loss_usd}$ | {sl_pips} Pips على 0.01 لوت)</i>\n"
-            
             msg += f"<b>الهدف (TP):</b> {tp}\n"
             msg += f"<i>(ربح: {profit_usd}$ | {tp_pips} Pips على 0.01 لوت)</i>\n\n"
-            
             msg += f"<b>سبب الدخول:</b>\n{reason}\n"
             msg += f"• SMC: {smc_status}\n"
             msg += f"• ICT: {ict_status}\n"
             msg += f"• الدايفرجنس: {div_status}"
             asyncio.create_task(send_telegram_message(msg))
 
-        # --- مراقبة الصفقة المفتوحة ---
+        # --- مراقبة الصفقة (تثبيت الخسارة/الربح بدقة) ---
         if self.active_trade:
             t = self.active_trade
             if t["action"] == "BUY":
                 if price >= t["tp"]:
-                    asyncio.create_task(send_telegram_message(f"✅ <b>تم تحقيق الهدف ({self.symbol})</b>\nربح: +${profit_usd}"))
+                    asyncio.create_task(send_telegram_message(f"✅ <b>تم تحقيق الهدف ({self.symbol})</b>\nربح: +${t['profit_usd']}"))
                     self.active_trade = None
                 elif price <= t["sl"]:
-                    asyncio.create_task(send_telegram_message(f"❌ <b>تم ضرب وقف الخسارة ({self.symbol})</b>\nخسارة: -${loss_usd}"))
+                    asyncio.create_task(send_telegram_message(f"❌ <b>تم ضرب وقف الخسارة ({self.symbol})</b>\nخسارة: -${t['loss_usd']}")) # تثبيت الخسارة بدقة
                     self.active_trade = None
             elif t["action"] == "SELL":
                 if price <= t["tp"]:
-                    asyncio.create_task(send_telegram_message(f"✅ <b>تم تحقيق الهدف ({self.symbol})</b>\nربح: +${profit_usd}"))
+                    asyncio.create_task(send_telegram_message(f"✅ <b>تم تحقيق الهدف ({self.symbol})</b>\nربح: +${t['profit_usd']}"))
                     self.active_trade = None
                 elif price >= t["sl"]:
-                    asyncio.create_task(send_telegram_message(f"❌ <b>تم ضرب وقف الخسارة ({self.symbol})</b>\nخسارة: -${loss_usd}"))
+                    asyncio.create_task(send_telegram_message(f"❌ <b>تم ضرب وقف الخسارة ({self.symbol})</b>\nخسارة: -${t['loss_usd']}")) # تثبيت الخسارة بدقة
                     self.active_trade = None
 
         candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df_15m.tail(5000).iterrows()]
 
         return {
             "status": "ok", "current_price": clean(price), "action": action, "htf_trend": htf_trend, "reason": reason,
-            "levels": {
-                "entry": entry, "sl": sl, "tp": tp,
-                "sl_pips": sl_pips, "tp_pips": tp_pips,
-                "loss_usd": loss_usd, "profit_usd": profit_usd
-            },
+            "levels": {"entry": entry, "sl": sl, "tp": tp, "sl_pips": sl_pips, "tp_pips": tp_pips, "loss_usd": loss_usd, "profit_usd": profit_usd},
             "active_trade": self.active_trade,
             "strategies": list(strategies.values()), "candles": candles,
             "source": "MTF Deep Simulator (Exness)"
@@ -360,7 +320,6 @@ def health_check():
 async def get_data(symbol: str):
     if symbol not in engines:
         engines[symbol] = MarketSimulator(symbol=symbol)
-    
     engines[symbol].update_live_tick()
     return engines[symbol].analyze()
 
@@ -444,7 +403,7 @@ def home():
                 </div>
                 
                 <div class="box">
-                    <div style="font-size:10px; color:#888; margin-bottom:4px;">مستويات التنفيذ (محسوبة لـ 0.01 لوت)</div>
+                    <div style="font-size:10px; color:#888; margin-bottom:4px;">مستويات التنفيذ (لـ 0.01 لوت)</div>
                     <div class="row"><span class="lbl">السعر الحالي</span><span id="p-live" class="val" style="color:#facc15;">0.00</span></div>
                     <div class="row"><span class="lbl">منطقة الدخول</span><span id="p-entry" class="val" style="color:#38bdf8;">0.00</span></div>
                     
@@ -504,26 +463,23 @@ def home():
                         const slDetail = document.getElementById('sl-detail');
                         const tpDetail = document.getElementById('tp-detail');
 
-                        // إذا كان هناك صفقة نشطة
                         if (data.active_trade) {
                             let t = data.active_trade;
                             badge.innerText = (t.action === 'BUY' ? 'BUY' : 'SELL') + ' (ACTIVE)';
                             badge.className = t.action === 'BUY' ? 'badge-buy' : 'badge-sell';
-                            reasonText.innerText = "هناك صفقة نشطة حالياً، بانتظار ضرب الهدف أو وقف الخسارة.";
+                            reasonText.innerText = "هناك صفقة نشطة حالياً.";
                             
                             entryEl.innerText = t.entry;
                             slEl.innerText = t.sl;
                             tpEl.innerText = t.tp;
 
-                            // نستخدم أرقام الصفقة النشطة
-                            slDetail.innerText = `(${data.levels.loss_usd}$ | ${data.levels.sl_pips} Pips)`;
-                            tpDetail.innerText = `(${data.levels.profit_usd}$ | ${data.levels.tp_pips} Pips)`;
+                            slDetail.innerText = `(-${data.levels.loss_usd}$ | ${data.levels.sl_pips} Pips)`;
+                            tpDetail.innerText = `(+${data.levels.profit_usd}$ | ${data.levels.tp_pips} Pips)`;
 
                             activeLines.push(series.createPriceLine({ price: t.entry, color: '#38bdf8', lineWidth: 2, title: 'ENTRY' }));
                             activeLines.push(series.createPriceLine({ price: t.sl, color: '#ef4444', lineWidth: 2, title: 'SL' }));
                             activeLines.push(series.createPriceLine({ price: t.tp, color: '#22c55e', lineWidth: 2, title: 'TP' }));
                         } 
-                        // إذا لا توجد صفقة
                         else {
                             badge.innerText = data.action === 'BUY' ? 'STRONG BUY' : data.action === 'SELL' ? 'STRONG SELL' : 'WAIT';
                             badge.className = data.action === 'BUY' ? 'badge-buy' : data.action === 'SELL' ? 'badge-sell' : 'badge-wait';
@@ -534,14 +490,13 @@ def home():
                             tpEl.innerText = data.levels.tp;
                             
                             if (data.action !== 'WAIT') {
-                                slDetail.innerText = `(-${data.levels.loss_usd}$ | -${data.levels.sl_pips} Pips)`;
-                                tpDetail.innerText = `(+${data.levels.profit_usd}$ | +${data.levels.tp_pips} Pips)`;
+                                slDetail.innerText = `(-${data.levels.loss_usd}$ | ${data.levels.sl_pips} Pips)`;
+                                tpDetail.innerText = `(+${data.levels.profit_usd}$ | ${data.levels.tp_pips} Pips)`;
                                 activeLines.push(series.createPriceLine({ price: data.levels.entry, color: '#38bdf8', lineWidth: 2, title: 'ENTRY' }));
                                 activeLines.push(series.createPriceLine({ price: data.levels.sl, color: '#ef4444', lineWidth: 2, title: 'SL' }));
                                 activeLines.push(series.createPriceLine({ price: data.levels.tp, color: '#22c55e', lineWidth: 2, title: 'TP' }));
                             } else {
-                                slDetail.innerText = "";
-                                tpDetail.innerText = "";
+                                slDetail.innerText = ""; tpDetail.innerText = "";
                             }
                         }
 
@@ -561,7 +516,6 @@ def home():
                                     <span style="color:${color}">${s.score > 0 ? '+' : ''}${s.score}</span>
                                 </div>
                                 <div class="strat-status" style="color:${color}"><strong>${s.status}</strong></div>
-                                <div class="strat-detail">${s.detail}</div>
                             </div>`;
                         });
                         document.getElementById('strategies-container').innerHTML = stratHtml;
@@ -573,13 +527,15 @@ def home():
                 currentSymbol = symbol;
                 document.querySelectorAll('.m-btn').forEach(b => b.classList.remove('active'));
                 document.getElementById('btn-' + symbol).classList.add('active');
-                document.getElementById('signal-badge').innerText = "جاري التحليل...";
+                
+                // مسح الشارت فوراً للانتقال السلس
+                series.setData([]);
+                clearLines();
+                document.getElementById('signal-badge').innerText = "جاري التحميل...";
                 
                 if (intervalId) clearInterval(intervalId);
                 fetchData();
-                
-                setTimeout(() => chart.timeScale().fitContent(), 200);
-                
+                setTimeout(() => chart.timeScale().fitContent(), 300);
                 intervalId = setInterval(fetchData, 2000); 
             }
 
