@@ -4,10 +4,10 @@ import numpy as np
 import pandas as pd
 import asyncio
 import json
-import httpx
-from datetime import datetime, timedelta
+import ccxt  # مكتبة جلب البيانات الاحترافية
+from datetime import datetime
 
-app = FastAPI(title="Super Signal Engine", version="23.0")
+app = FastAPI(title="Pro Signal Engine", version="24.0")
 
 class SignalEngine:
     def __init__(self, symbol, balance=30.0, risk_usd=3.0):
@@ -16,13 +16,44 @@ class SignalEngine:
         self.risk_usd = risk_usd
         self.df = pd.DataFrame()
         self.source = "Unknown"
+        
+        # إعداد منصة التداول (Binance افتراضياً)
+        self.exchange = ccxt.binance({
+            'enableRateLimit': True,
+            'options': {'defaultType': 'spot'}
+        })
+        
+        # تحويل رموز الواجهة إلى رموز ccxt
+        self.ccxt_symbols = {
+            "BTCUSDT": "BTC/USDT",
+            "XAUUSD": "PAXG/USDT", # الذهب عبر Paxos Gold
+            "WTIUSD": "CL/USDT"    # النفط (قد لا يدعمه Binance، سنستخدم محاكاة)
+        }
+
+    def fetch_historical_data(self):
+        """جلب البيانات في مسار منفصل (Sync) لتجنب تجميد الـ WebSocket"""
+        ccxt_sym = self.ccxt_symbols.get(self.symbol, "BTC/USDT")
+        try:
+            # محاولة جلب 300 شمعة (فريم 15 دقيقة)
+            ohlcv = self.exchange.fetch_ohlcv(ccxt_sym, timeframe='15m', limit=300)
+            if ohlcv:
+                df = pd.DataFrame(ohlcv, columns=['time', 'Open', 'High', 'Low', 'Close', 'Volume'])
+                df['time'] = pd.to_datetime(df['time'], unit='ms')
+                df.set_index('time', inplace=True)
+                self.df = df
+                self.source = f"Binance (ccxt) - {ccxt_sym}"
+                return True
+        except Exception as e:
+            print(f"Error fetching {ccxt_sym}: {e}")
+
+        # خطة الطوارئ: محاكاة إذا فشل النفط أو انقطعت الشبكة
+        return self.generate_fallback_data()
 
     def generate_fallback_data(self):
-        # توليد بيانات فورية (محاكاة) لضمان عمل الواجهة
-        dates = [datetime.now() - timedelta(minutes=15*i) for i in range(300)]
+        dates = [datetime.now() - pd.Timedelta(minutes=15*i) for i in range(300)]
         dates.reverse()
         base_price = 60000 if "BTC" in self.symbol else (2400 if "XAU" in self.symbol else 80)
-        prices = [base_price + np.random.uniform(-base_price*0.02, base_price*0.02) for _ in range(300)]
+        prices = [base_price + np.random.uniform(-base_price*0.01, base_price*0.01) for _ in range(300)]
         
         df = pd.DataFrame({
             'Open': prices, 
@@ -32,38 +63,13 @@ class SignalEngine:
             'Volume': [np.random.uniform(100, 1000) for _ in range(300)]
         }, index=dates)
         self.df = df
-        self.source = "Simulation (Render Blocked API)"
-
-    async def fetch_data(self):
-        # محاولة سريعة لجلب البيانات الحقيقية (مهلة 3 ثواني فقط)
-        if self.symbol in ["BTCUSDT", "XAUUSD"]:
-            okx_symbol = "BTC-USDT" if self.symbol == "BTCUSDT" else "PAXG-USDT"
-            url = f"https://www.okx.com/api/v5/market/candles?instId={okx_symbol}&bar=15m&limit=300"
-            try:
-                async with httpx.AsyncClient(timeout=3.0) as client:
-                    res = await client.get(url)
-                    data = res.json()
-                    if data.get("code") == "0":
-                        klines = data["data"]
-                        klines.reverse()
-                        df = pd.DataFrame(klines).iloc[:, :6]
-                        df.columns = ['time', 'Open', 'High', 'Low', 'Close', 'Volume']
-                        df['time'] = pd.to_datetime(df['time'].astype(float), unit='ms')
-                        df.set_index('time', inplace=True)
-                        self.df = df.astype(float)
-                        self.source = f"OKX ({okx_symbol})"
-                        return
-            except Exception:
-                pass # في حال الفشل، ننتقل للخطة البديلة فوراً
-
-        # إذا فشل الجلب أو كان الأصل نفطاً، نولد البيانات فوراً
-        self.generate_fallback_data()
+        self.source = "Simulation (Fallback)"
+        return True
 
     def analyze(self):
-        # إذا لم تكن البيانات جاهزة، نولدها فوراً
         if len(self.df) < 200:
-            self.generate_fallback_data()
-
+            return {"status": "loading", "message": "جاري جمع البيانات..."}
+        
         df = self.df.copy()
         
         # 1. المؤشرات الفنية
@@ -81,13 +87,13 @@ class SignalEngine:
         low_close = np.abs(df["Low"] - df["Close"].shift())
         df["ATR"] = (pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)).rolling(14).mean()
 
-        # 2. SMC (الهيكل السعري)
+        # 2. SMC
         df["Swing_High"] = df["High"] == df["High"].rolling(5).max()
         df["Swing_Low"] = df["Low"] == df["Low"].rolling(5).min()
         last_swing_high = df[df["Swing_High"]]["High"].iloc[-1] if not df[df["Swing_High"]].empty else 0
         last_swing_low = df[df["Swing_Low"]]["Low"].iloc[-1] if not df[df["Swing_Low"]].empty else 0
 
-        # 3. ICT (الفجوات وبلوكات الأوامر)
+        # 3. ICT
         df["FVG_Bull"] = df["Low"] > df["High"].shift(2)
         df["FVG_Bear"] = df["High"] < df["Low"].shift(2)
         df["OB_Bull"] = (df["Close"].shift(1) < df["Open"].shift(1)) & (df["Close"] > df["High"].shift(1))
@@ -99,15 +105,14 @@ class SignalEngine:
 
         strategies = {}
 
-        # SMC
+        # التقييم
         if price > last_swing_high:
-            strategies["SMC"] = {"name": "SMC (كسر هيكل صاعد)", "status": "اختراق قمة سابقة (BOS صاعد)", "score": 2.0}
+            strategies["SMC"] = {"name": "SMC (كسر هيكل صاعد)", "status": "اختراق قمة سابقة (BOS)", "score": 2.0}
         elif price < last_swing_low:
-            strategies["SMC"] = {"name": "SMC (كسر هيكل هابط)", "status": "اختراق قاع سابق (BOS هابط)", "score": -2.0}
+            strategies["SMC"] = {"name": "SMC (كسر هيكل هابط)", "status": "اختراق قاع سابق (BOS)", "score": -2.0}
         else:
             strategies["SMC"] = {"name": "SMC", "status": "داخل نطاق السيولة", "score": 0}
 
-        # ICT
         if last["FVG_Bull"] or last["OB_Bull"]:
             strategies["ICT"] = {"name": "ICT (فجوة/بلوك)", "status": "فجوة أو بلوك أوامر شرائي", "score": 1.5}
         elif last["FVG_Bear"] or last["OB_Bear"]:
@@ -115,7 +120,6 @@ class SignalEngine:
         else:
             strategies["ICT"] = {"name": "ICT", "status": "لا توجد فجوات نشطة", "score": 0}
 
-        # Elliott
         if last["EMA_21"] > last["EMA_200"] and price > last["EMA_50"]:
             strategies["Elliott"] = {"name": "إليوت", "status": "موجة دافعة صاعدة (3/5)", "score": 1.0}
         elif last["EMA_21"] < last["EMA_200"] and price < last["EMA_50"]:
@@ -123,7 +127,6 @@ class SignalEngine:
         else:
             strategies["Elliott"] = {"name": "إليوت", "status": "موجة تصحيحية", "score": 0}
 
-        # Technical
         if last["RSI"] < 35:
             strategies["Technical"] = {"name": "الفني (RSI)", "status": f"تشبع بيعي ({last['RSI']:.1f})", "score": 1.0}
         elif last["RSI"] > 65:
@@ -132,12 +135,11 @@ class SignalEngine:
             strategies["Technical"] = {"name": "الفني (RSI)", "status": f"محايد ({last['RSI']:.1f})", "score": 0}
 
         total_score = sum(s["score"] for s in strategies.values())
-
         action = "WAIT"
         if total_score >= 4.0: action = "BUY"
         elif total_score <= -4.0: action = "SELL"
 
-        # إدارة المخاطر (خسارة 3 دولار)
+        # إدارة المخاطر (خسارة 3$ ثابتة)
         sl_dist = 1.5 * atr
         position_size = 0
         warning_msg = ""
@@ -169,21 +171,26 @@ async def websocket_endpoint(websocket: WebSocket, symbol: str):
     engine = SignalEngine(symbol=symbol)
     
     try:
-        # إرسال رسالة ترحيبية فورية
-        await websocket.send_text(json.dumps({"status": "loading", "message": "جاري تهيئة المحرك..."}))
+        # إرسال رسالة فورية
+        await websocket.send_text(json.dumps({"status": "loading", "message": "جاري جلب البيانات من المنصة..."}))
         
-        # محاولة جلب البيانات الحقيقية (مع خطة الطوارئ الفورية)
-        await engine.fetch_data()
+        # جلب البيانات في مسار منفصل (مهم جداً لمنع تجميد WebSocket)
+        await asyncio.to_thread(engine.fetch_historical_data)
         
-        # بدء التحليل والإرسال
+        # حلقة التحديث
         while True:
             result = engine.analyze()
             await websocket.send_text(json.dumps(result))
-            await asyncio.sleep(2) # تحديث كل ثانيتين
+            await asyncio.sleep(5) # تحديث كل 5 ثوانٍ
+            
     except WebSocketDisconnect:
         pass
     except Exception as e:
         print(f"WebSocket Error: {e}")
+        try:
+            await websocket.send_text(json.dumps({"status": "error", "message": f"خطأ: {str(e)}"}))
+        except:
+            pass
 
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -193,7 +200,7 @@ def home():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Super Signal Engine</title>
+        <title>Pro Signal Engine</title>
         <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
         <style>
             * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -290,10 +297,17 @@ def home():
 
                 ws.onmessage = (event) => {
                     let data = JSON.parse(event.data);
+                    
+                    if (data.status === 'error') {
+                        document.getElementById('signal-badge').innerText = data.message;
+                        document.getElementById('signal-badge').className = 'badge-sell';
+                        return;
+                    }
                     if (data.status === 'loading') {
                         document.getElementById('signal-badge').innerText = data.message;
                         return;
                     }
+                    
                     series.setData(data.candles);
                     clearLines();
                     
@@ -325,7 +339,10 @@ def home():
                         activeLines.push(series.createPriceLine({ price: data.levels.tp, color: '#22c55e', lineWidth: 2, title: 'TP' }));
                     }
                 };
-                ws.onclose = () => { setTimeout(() => switchSymbol(currentSymbol), 3000); };
+                ws.onclose = () => { 
+                    console.log('WS closed. Reconnecting...');
+                    setTimeout(() => switchSymbol(currentSymbol), 3000); 
+                };
             }
 
             window.onload = () => { initChart(); switchSymbol('BTCUSDT'); };
