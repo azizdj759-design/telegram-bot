@@ -5,9 +5,11 @@ import pandas as pd
 import math
 import httpx
 import asyncio
+import yfinance as yf
 from datetime import datetime, timedelta
+import time
 
-app = FastAPI(title="Zero Reversal Signal Engine", version="44.0")
+app = FastAPI(title="Zero Reversal Engine (Real Data)", version="45.0")
 
 TELEGRAM_TOKEN = "8741070555:AAGf6ys8UH8TZwlQpy_vWff9YONZ9BDmOok"
 SUBSCRIBERS = set()
@@ -24,70 +26,73 @@ async def sync_subscribers():
                 for update in data["result"]:
                     LAST_UPDATE_ID = update["update_id"]
                     if "message" in update and "chat" in update["message"]:
-                        cid = update["message"]["chat"]["id"]
-                        SUBSCRIBERS.add(cid)
-                        print(f"✅ مستخدم جديد انضم للتلغرام: {cid}")
-    except Exception as e:
-        print(f"Telegram Sync Error: {e}")
+                        SUBSCRIBERS.add(update["message"]["chat"]["id"])
+    except Exception:
+        pass
 
 async def send_telegram_message(message: str):
     await sync_subscribers() 
-    if not SUBSCRIBERS: 
-        print("⚠️ لا يوجد مشتركون في التلغرام. أرسل /start للبوت أولاً.")
-        return False
-    
+    if not SUBSCRIBERS: return False
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     async with httpx.AsyncClient() as client:
         for chat_id in list(SUBSCRIBERS):
             try:
                 await client.post(url, json={"chat_id": chat_id, "text": message, "parse_mode": "HTML"})
-            except Exception as e:
-                print(f"Telegram Send Error: {e}")
+            except:
+                pass
     return True
 
-# رابط لاختبار التلغرام مباشرة
 @app.get("/test-telegram")
 async def test_telegram():
-    success = await send_telegram_message("🚀 <b>النظام متصل!</b>\nهذه رسالة تجريبية للتأكد من وصول الإشعارات.")
-    if success:
-        return {"status": "success", "message": "تم إرسال الرسالة للتلغرام بنجاح!"}
-    else:
-        return {"status": "error", "message": "فشل الإرسال. تأكد من إرسال /start للبوت أولاً."}
+    success = await send_telegram_message("🚀 <b>النظام متصل!</b>\nهذه رسالة تجريبية.")
+    return {"status": "success" if success else "error"}
 
 engines = {}
 
-class MarketSimulator:
+class MarketEngine:
     def __init__(self, symbol):
         self.symbol = symbol
         self.tick_count = 0
         self.active_trade = None 
+        self.is_real_data = False
+        self.last_fetch_time = 0
         
+        # خريطة لتحويل الرموز إلى رموز Yahoo Finance الحقيقية
+        self.yf_map = {
+            "BTCUSDT": "BTC-USD",
+            "ETHUSDT": "ETH-USD",
+            "XAUUSD": "GC=F",
+            "XAGUSD": "SI=F",
+            "WTIUSD": "CL=F",
+            "EURUSD": "EURUSD=X",
+            "GBPUSD": "GBPUSD=X",
+            "USDJPY": "JPY=X",
+            "AUDUSD": "AUDUSD=X",
+            "USDCAD": "CAD=X"
+        }
+        
+        # إعدادات المحاكاة (تعمل كخطة بديلة فقط)
         np.random.seed(sum([ord(c) for c in symbol]))
-        
         if symbol == "BTCUSDT": self.base_price, self.volatility, self.decimals = 65000.0, 150.0, 2
         elif symbol == "ETHUSDT": self.base_price, self.volatility, self.decimals = 3500.0, 15.0, 2
-        elif symbol == "SOLUSDT": self.base_price, self.volatility, self.decimals = 150.0, 2.5, 2
-        elif symbol == "BNBUSDT": self.base_price, self.volatility, self.decimals = 600.0, 10.0, 2
-        elif symbol == "XRPUSDT": self.base_price, self.volatility, self.decimals = 0.5500, 0.015, 4
         elif symbol == "XAUUSD": self.base_price, self.volatility, self.decimals = 2350.0, 4.0, 2
-        elif symbol == "XAGUSD": self.base_price, self.volatility, self.decimals = 30.0, 0.3, 2
         elif symbol == "EURUSD": self.base_price, self.volatility, self.decimals = 1.08500, 0.0015, 5
         elif symbol == "GBPUSD": self.base_price, self.volatility, self.decimals = 1.27000, 0.0018, 5
         elif symbol == "USDJPY": self.base_price, self.volatility, self.decimals = 155.000, 0.25, 3
         elif symbol == "AUDUSD": self.base_price, self.volatility, self.decimals = 0.66000, 0.0012, 5
         elif symbol == "USDCAD": self.base_price, self.volatility, self.decimals = 1.37000, 0.0014, 5
+        elif symbol == "XAGUSD": self.base_price, self.volatility, self.decimals = 30.0, 0.3, 2
         else: self.base_price, self.volatility, self.decimals = 78.0, 0.8, 2
 
         self.current_price = self.base_price
-        self.df_15m = self._generate_historical_data(5200)
+        self.df_15m = self._generate_simulated_data(1000)
 
-    def _generate_historical_data(self, length):
+    def _generate_simulated_data(self, length):
         dates = [datetime.now() - timedelta(minutes=15*i) for i in range(length)]
         dates.reverse()
-        drift = (np.random.rand() - 0.5) * self.volatility * 0.1
         prices = [self.base_price]
         for _ in range(length - 1):
-            change = np.random.normal(drift, self.volatility)
+            change = np.random.normal(0, self.volatility)
             prices.append(prices[-1] + change)
             
         df = pd.DataFrame(index=dates)
@@ -98,24 +103,56 @@ class MarketSimulator:
         df['Volume'] = np.random.uniform(1000, 5000, length)
         return df
 
+    async def fetch_real_data(self):
+        # تحديث كل 60 ثانية لتجنب حظر Yahoo
+        if time.time() - self.last_fetch_time < 60:
+            return
+            
+        self.last_fetch_time = time.time()
+        yf_symbol = self.yf_map.get(self.symbol)
+        if not yf_symbol: return
+
+        try:
+            # جلب البيانات الحقيقية في مسار منفصل لتجنب تجميد الواجهة
+            ticker = await asyncio.to_thread(yf.Ticker, yf_symbol)
+            hist = await asyncio.to_thread(ticker.history, period="5d", interval="15m")
+            
+            if not hist.empty:
+                # تصفية البيانات لمنع الشموع الوهمية
+                hist = hist.dropna()
+                hist = hist[hist['Close'] > 0] # التأكد من عدم وجود أسعار صفرية
+                
+                # قص البيانات لآخر 500 شمعة فقط لضمان سرعة الشارت
+                self.df_15m = hist[['Open', 'High', 'Low', 'Close', 'Volume']].tail(500)
+                self.current_price = float(self.df_15m.iloc[-1]['Close'])
+                self.is_real_data = True
+                return
+        except Exception as e:
+            print(f"Yahoo Error: {e}")
+
+        # إذا فشل جلب البيانات الحقيقية
+        self.is_real_data = False
+
     def update_live_tick(self):
-        self.tick_count += 1
-        change = np.random.normal(0, self.volatility * 0.2)
-        self.current_price += change
-        
-        self.df_15m.iloc[-1, self.df_15m.columns.get_loc('Close')] = self.current_price
-        self.df_15m.iloc[-1, self.df_15m.columns.get_loc('High')] = max(self.df_15m.iloc[-1]['High'], self.current_price)
-        self.df_15m.iloc[-1, self.df_15m.columns.get_loc('Low')] = min(self.df_15m.iloc[-1]['Low'], self.current_price)
-        
-        if self.tick_count >= 10:
-            self.tick_count = 0
-            new_time = self.df_15m.index[-1] + timedelta(minutes=15)
-            new_row = pd.DataFrame({
-                'Open': [self.current_price], 'High': [self.current_price],
-                'Low': [self.current_price], 'Close': [self.current_price],
-                'Volume': [np.random.uniform(1000, 5000)]
-            }, index=[new_time])
-            self.df_15m = pd.concat([self.df_15m, new_row]).tail(5200)
+        # إذا كنا في وضع المحاكاة، نحرك السعر
+        if not self.is_real_data:
+            self.tick_count += 1
+            change = np.random.normal(0, self.volatility * 0.2)
+            self.current_price += change
+            
+            self.df_15m.iloc[-1, self.df_15m.columns.get_loc('Close')] = self.current_price
+            self.df_15m.iloc[-1, self.df_15m.columns.get_loc('High')] = max(self.df_15m.iloc[-1]['High'], self.current_price)
+            self.df_15m.iloc[-1, self.df_15m.columns.get_loc('Low')] = min(self.df_15m.iloc[-1]['Low'], self.current_price)
+            
+            if self.tick_count >= 10:
+                self.tick_count = 0
+                new_time = self.df_15m.index[-1] + timedelta(minutes=15)
+                new_row = pd.DataFrame({
+                    'Open': [self.current_price], 'High': [self.current_price],
+                    'Low': [self.current_price], 'Close': [self.current_price],
+                    'Volume': [np.random.uniform(1000, 5000)]
+                }, index=[new_time])
+                self.df_15m = pd.concat([self.df_15m, new_row]).tail(500)
 
     def _add_indicators(self, df):
         df = df.copy()
@@ -144,24 +181,28 @@ class MarketSimulator:
 
     def calculate_pnl_and_pips(self, sl_dist, tp_dist):
         lot_size = 0.01
-        if self.symbol in ["EURUSD", "GBPUSD", "AUDUSD", "USDCAD"]:
-            sl_pips = round(sl_dist / 0.0001); tp_pips = round(tp_dist / 0.0001)
-            loss_usd = sl_pips * 0.10; profit_usd = tp_pips * 0.10
-        elif self.symbol == "USDJPY":
-            sl_pips = round(sl_dist / 0.01); tp_pips = round(tp_dist / 0.01)
-            loss_usd = sl_pips * 0.10; profit_usd = tp_pips * 0.10
-        elif self.symbol == "XAUUSD":
-            sl_pips = round(sl_dist * 10); tp_pips = round(tp_dist * 10)
-            loss_usd = sl_dist * 1.0; profit_usd = tp_dist * 1.0
-        elif self.symbol == "XAGUSD":
-            sl_pips = round(sl_dist * 100); tp_pips = round(tp_dist * 100)
-            loss_usd = sl_dist * 50.0; profit_usd = tp_dist * 50.0
+        if "USD" in self.symbol and "USDT" not in self.symbol: 
+            if self.symbol == "XAUUSD":
+                loss_usd = sl_dist * 1.0; profit_usd = tp_dist * 1.0
+                sl_pips = round(sl_dist * 10); tp_pips = round(tp_dist * 10)
+            elif self.symbol == "XAGUSD":
+                loss_usd = sl_dist * 50.0; profit_usd = tp_dist * 50.0
+                sl_pips = round(sl_dist * 100); tp_pips = round(tp_dist * 100)
+            elif self.symbol == "USDJPY":
+                loss_usd = sl_dist * 10.0; profit_usd = tp_dist * 10.0 # قيمة تقريبية
+                sl_pips = round(sl_dist / 0.01); tp_pips = round(tp_dist / 0.01)
+            else:
+                loss_usd = sl_dist * 1000.0; profit_usd = tp_dist * 1000.0
+                sl_pips = round(sl_dist / 0.0001); tp_pips = round(tp_dist / 0.0001)
         else:
             sl_pips = "---"; tp_pips = "---"
             loss_usd = sl_dist * lot_size; profit_usd = tp_dist * lot_size
         return sl_pips, tp_pips, round(loss_usd, 2), round(profit_usd, 2)
 
     def analyze(self):
+        if len(self.df_15m) < 200:
+            return {"status": "loading", "message": "جاري جمع الشموع الكافية (200 شمعة)..."}
+
         df_15m = self._add_indicators(self.df_15m)
         df_1h = self.df_15m.resample('1h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
         df_1h = self._add_indicators(df_1h)
@@ -264,8 +305,8 @@ class MarketSimulator:
         action = "WAIT"
         reason = "لا توجد صفقة نشطة. الشروط غير مكتملة."
         
-        # العتبة الصارمة 4.0 للزيرو انعكاس
-        if self.active_trade is None and smc_strong:
+        # منع إرسال التلغرام إذا كنا في وضع المحاكاة
+        if self.active_trade is None and smc_strong and self.is_real_data:
             if htf_trend == "BULLISH" and total_score >= 4.0 and not veto_buy:
                 action = "BUY"
                 reason = "توافق صاعد خارق (Zero Reversal)."
@@ -317,14 +358,18 @@ class MarketSimulator:
                     asyncio.create_task(send_telegram_message(f"❌ <b>تم ضرب وقف الخسارة ({self.symbol})</b>\nخسارة: -${t['loss_usd']}")) 
                     self.active_trade = None
 
-        candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df_15m.tail(5000).iterrows()]
+        # تصفية البيانات قبل الإرسال لمنع الشموع العملاقة
+        df_clean = df_15m.dropna().copy()
+        df_clean = df_clean[df_clean['Close'] > 0]
+        
+        candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df_clean.tail(500).iterrows()]
 
         return {
             "status": "ok", "current_price": clean(price), "action": action, "htf_trend": htf_trend, "reason": reason,
             "levels": {"entry": entry, "sl": sl, "tp": tp, "sl_pips": sl_pips, "tp_pips": tp_pips, "loss_usd": loss_usd, "profit_usd": profit_usd},
-            "active_trade": self.active_trade,
+            "active_trade": self.active_trade, "is_real_data": self.is_real_data,
             "strategies": list(strategies.values()), "candles": candles,
-            "source": "Zero Reversal Simulator (Exness)"
+            "source": "Yahoo Finance (Real)" if self.is_real_data else "Simulation (Fake)"
         }
 
 @app.get("/health")
@@ -334,7 +379,9 @@ def health_check():
 @app.get("/api/data/{symbol}")
 async def get_data(symbol: str):
     if symbol not in engines:
-        engines[symbol] = MarketSimulator(symbol=symbol)
+        engines[symbol] = MarketEngine(symbol=symbol)
+    
+    await engines[symbol].fetch_real_data()
     engines[symbol].update_live_tick()
     return engines[symbol].analyze()
 
@@ -381,17 +428,17 @@ def home():
 
             .trend-bull { color: #22c55e; font-weight: bold; }
             .trend-bear { color: #ef4444; font-weight: bold; }
+            .real-warning { background: #ef4444; color: white; text-align: center; font-size: 10px; padding: 4px; font-weight: bold; display: none; }
         </style>
     </head>
     <body>
+        <div id="real-warning" class="real-warning">⚠️ تحذير: أنت في وضع المحاكاة (البيانات غير حقيقية). لن يتم إرسال إشارات للتلغرام.</div>
+        
         <div class="header">
             <div class="brand">ZERO REVERSAL</div>
             <div class="menu">
                 <button class="m-btn active" id="btn-BTCUSDT" onclick="switchSymbol('BTCUSDT')">BTC</button>
                 <button class="m-btn" id="btn-ETHUSDT" onclick="switchSymbol('ETHUSDT')">ETH</button>
-                <button class="m-btn" id="btn-SOLUSDT" onclick="switchSymbol('SOLUSDT')">SOL</button>
-                <button class="m-btn" id="btn-BNBUSDT" onclick="switchSymbol('BNBUSDT')">BNB</button>
-                <button class="m-btn" id="btn-XRPUSDT" onclick="switchSymbol('XRPUSDT')">XRP</button>
                 <button class="m-btn" id="btn-XAUUSD" onclick="switchSymbol('XAUUSD')">GOLD</button>
                 <button class="m-btn" id="btn-XAGUSD" onclick="switchSymbol('XAGUSD')">SILVER</button>
                 <button class="m-btn" id="btn-WTIUSD" onclick="switchSymbol('WTIUSD')">OIL</button>
@@ -437,6 +484,7 @@ def home():
                             <span id="tp-detail" class="sub-val" style="color:#4ade80;"></span>
                         </div>
                     </div>
+                    <div style="font-size:9px; color:#555; text-align:center; margin-top:4px;" id="source-text"></div>
                 </div>
                 
                 <div class="box" style="flex:1;">
@@ -467,9 +515,27 @@ def home():
                 fetch('/api/data/' + currentSymbol)
                     .then(res => res.json())
                     .then(data => {
+                        if (data.status === 'loading') {
+                            document.getElementById('signal-badge').innerText = data.message;
+                            return;
+                        }
+                        
                         series.setData(data.candles);
                         clearLines();
                         
+                        const realWarning = document.getElementById('real-warning');
+                        const sourceText = document.getElementById('source-text');
+                        
+                        if (!data.is_real_data) {
+                            realWarning.style.display = 'block';
+                            sourceText.innerText = "Source: Simulation (Fake)";
+                            sourceText.style.color = "#ef4444";
+                        } else {
+                            realWarning.style.display = 'none';
+                            sourceText.innerText = "Source: Yahoo Finance (Real Data)";
+                            sourceText.style.color = "#22c55e";
+                        }
+
                         const badge = document.getElementById('signal-badge');
                         const reasonText = document.getElementById('reason-text');
                         const entryEl = document.getElementById('p-entry');
@@ -554,8 +620,8 @@ def home():
                 setTimeout(() => {
                     fetchData();
                     chart.timeScale().fitContent();
-                    intervalId = setInterval(fetchData, 2000); 
-                }, 300);
+                    intervalId = setInterval(fetchData, 3000); // تحديث كل 3 ثواني
+                }, 500);
             }
 
             window.onload = () => { initChart(); switchSymbol('BTCUSDT'); };
