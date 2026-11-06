@@ -1,3 +1,189 @@
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
+import numpy as np
+import pandas as pd
+import asyncio
+import json
+import ccxt  # مكتبة جلب البيانات الاحترافية
+from datetime import datetime
+
+app = FastAPI(title="Pro Signal Engine", version="24.0")
+
+class SignalEngine:
+    def __init__(self, symbol, balance=30.0, risk_usd=3.0):
+        self.symbol = symbol
+        self.balance = balance
+        self.risk_usd = risk_usd
+        self.df = pd.DataFrame()
+        self.source = "Unknown"
+        
+        # إعداد منصة التداول (Binance افتراضياً)
+        self.exchange = ccxt.binance({
+            'enableRateLimit': True,
+            'options': {'defaultType': 'spot'}
+        })
+        
+        # تحويل رموز الواجهة إلى رموز ccxt
+        self.ccxt_symbols = {
+            "BTCUSDT": "BTC/USDT",
+            "XAUUSD": "PAXG/USDT", # الذهب عبر Paxos Gold
+            "WTIUSD": "CL/USDT"    # النفط
+        }
+
+    def fetch_historical_data(self):
+        """جلب البيانات في مسار منفصل (Sync) لتجنب تجميد الـ WebSocket"""
+        ccxt_sym = self.ccxt_symbols.get(self.symbol, "BTC/USDT")
+        try:
+            ohlcv = self.exchange.fetch_ohlcv(ccxt_sym, timeframe='15m', limit=300)
+            if ohlcv:
+                df = pd.DataFrame(ohlcv, columns=['time', 'Open', 'High', 'Low', 'Close', 'Volume'])
+                df['time'] = pd.to_datetime(df['time'], unit='ms')
+                df.set_index('time', inplace=True)
+                self.df = df
+                self.source = f"Binance (ccxt) - {ccxt_sym}"
+                return True
+        except Exception as e:
+            print(f"Error fetching {ccxt_sym}: {e}")
+
+        return self.generate_fallback_data()
+
+    def generate_fallback_data(self):
+        dates = [datetime.now() - pd.Timedelta(minutes=15*i) for i in range(300)]
+        dates.reverse()
+        base_price = 60000 if "BTC" in self.symbol else (2400 if "XAU" in self.symbol else 80)
+        prices = [base_price + np.random.uniform(-base_price*0.01, base_price*0.01) for _ in range(300)]
+        
+        df = pd.DataFrame({
+            'Open': prices, 
+            'High': [p + np.random.uniform(10, 50) for p in prices],
+            'Low': [p - np.random.uniform(10, 50) for p in prices],
+            'Close': [p + np.random.uniform(-20, 20) for p in prices],
+            'Volume': [np.random.uniform(100, 1000) for _ in range(300)]
+        }, index=dates)
+        self.df = df
+        self.source = "Simulation (Fallback)"
+        return True
+
+    def analyze(self):
+        if len(self.df) < 200:
+            return {"status": "loading", "message": "جاري جمع البيانات..."}
+        
+        df = self.df.copy()
+        
+        # 1. المؤشرات الفنية
+        df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
+        df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
+        df["EMA_200"] = df["Close"].ewm(span=200, adjust=False).mean()
+        
+        delta = df["Close"].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        df["RSI"] = 100 - (100 / (1 + (gain / loss)))
+        
+        high_low = df["High"] - df["Low"]
+        high_close = np.abs(df["High"] - df["Close"].shift())
+        low_close = np.abs(df["Low"] - df["Close"].shift())
+        df["ATR"] = (pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)).rolling(14).mean()
+
+        # 2. SMC
+        df["Swing_High"] = df["High"] == df["High"].rolling(5).max()
+        df["Swing_Low"] = df["Low"] == df["Low"].rolling(5).min()
+        last_swing_high = df[df["Swing_High"]]["High"].iloc[-1] if not df[df["Swing_High"]].empty else 0
+        last_swing_low = df[df["Swing_Low"]]["Low"].iloc[-1] if not df[df["Swing_Low"]].empty else 0
+
+        # 3. ICT
+        df["FVG_Bull"] = df["Low"] > df["High"].shift(2)
+        df["FVG_Bear"] = df["High"] < df["Low"].shift(2)
+        df["OB_Bull"] = (df["Close"].shift(1) < df["Open"].shift(1)) & (df["Close"] > df["High"].shift(1))
+        df["OB_Bear"] = (df["Close"].shift(1) > df["Open"].shift(1)) & (df["Close"] < df["Low"].shift(1))
+
+        last = df.iloc[-2]
+        price = df.iloc[-1]["Close"]
+        atr = last["ATR"]
+
+        strategies = {}
+
+        if price > last_swing_high:
+            strategies["SMC"] = {"name": "SMC (كسر هيكل صاعد)", "status": "اختراق قمة سابقة (BOS)", "score": 2.0}
+        elif price < last_swing_low:
+            strategies["SMC"] = {"name": "SMC (كسر هيكل هابط)", "status": "اختراق قاع سابق (BOS)", "score": -2.0}
+        else:
+            strategies["SMC"] = {"name": "SMC", "status": "داخل نطاق السيولة", "score": 0}
+
+        if last["FVG_Bull"] or last["OB_Bull"]:
+            strategies["ICT"] = {"name": "ICT (فجوة/بلوك)", "status": "فجوة أو بلوك أوامر شرائي", "score": 1.5}
+        elif last["FVG_Bear"] or last["OB_Bear"]:
+            strategies["ICT"] = {"name": "ICT (فجوة/بلوك)", "status": "فجوة أو بلوك أوامر بيعي", "score": -1.5}
+        else:
+            strategies["ICT"] = {"name": "ICT", "status": "لا توجد فجوات نشطة", "score": 0}
+
+        if last["EMA_21"] > last["EMA_200"] and price > last["EMA_50"]:
+            strategies["Elliott"] = {"name": "إليوت", "status": "موجة دافعة صاعدة (3/5)", "score": 1.0}
+        elif last["EMA_21"] < last["EMA_200"] and price < last["EMA_50"]:
+            strategies["Elliott"] = {"name": "إليوت", "status": "موجة دافعة هابطة (3/5)", "score": -1.0}
+        else:
+            strategies["Elliott"] = {"name": "إليوت", "status": "موجة تصحيحية", "score": 0}
+
+        if last["RSI"] < 35:
+            strategies["Technical"] = {"name": "الفني (RSI)", "status": f"تشبع بيعي ({last['RSI']:.1f})", "score": 1.0}
+        elif last["RSI"] > 65:
+            strategies["Technical"] = {"name": "الفني (RSI)", "status": f"تشبع شرائي ({last['RSI']:.1f})", "score": -1.0}
+        else:
+            strategies["Technical"] = {"name": "الفني (RSI)", "status": f"محايد ({last['RSI']:.1f})", "score": 0}
+
+        total_score = sum(s["score"] for s in strategies.values())
+        action = "WAIT"
+        if total_score >= 4.0: action = "BUY"
+        elif total_score <= -4.0: action = "SELL"
+
+        sl_dist = 1.5 * atr
+        position_size = 0
+        warning_msg = ""
+        
+        if action != "WAIT" and sl_dist > 0:
+            entry = price
+            sl = entry - sl_dist if action == "BUY" else entry + sl_dist
+            tp = entry + (3.0 * atr) if action == "BUY" else entry - (3.0 * atr)
+            position_size = self.risk_usd / sl_dist
+            if position_size < 0.0001:
+                warning_msg = "⚠️ حجم اللوت صغير جداً! قد يرفضه البروكر."
+            entry, sl, tp = round(entry, 2), round(sl, 2), round(tp, 2)
+        else:
+            entry, sl, tp = 0, 0, 0
+
+        candles = [{"time": int(idx.timestamp()), "open": float(row["Open"]), "high": float(row["High"]), "low": float(row["Low"]), "close": float(row["Close"])} for idx, row in df.tail(150).iterrows()]
+
+        return {
+            "status": "ok", "symbol": self.symbol, "current_price": round(price, 2), "action": action,
+            "levels": {"entry": entry, "sl": sl, "tp": tp},
+            "position_size": round(position_size, 4), "risk_usd": self.risk_usd,
+            "warning": warning_msg, "strategies": list(strategies.values()), "candles": candles,
+            "source": self.source
+        }
+
+@app.websocket("/ws/{symbol}")
+async def websocket_endpoint(websocket: WebSocket, symbol: str):
+    await websocket.accept()
+    engine = SignalEngine(symbol=symbol)
+    
+    try:
+        await websocket.send_text(json.dumps({"status": "loading", "message": "جاري جلب البيانات من المنصة..."}))
+        await asyncio.to_thread(engine.fetch_historical_data)
+        
+        while True:
+            result = engine.analyze()
+            await websocket.send_text(json.dumps(result))
+            await asyncio.sleep(5)
+            
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"WebSocket Error: {e}")
+        try:
+            await websocket.send_text(json.dumps({"status": "error", "message": f"خطأ: {str(e)}"}))
+        except:
+            pass
+
 @app.get("/", response_class=HTMLResponse)
 def home():
     return """
@@ -121,7 +307,7 @@ def home():
                     }
                     
                     series.setData(data.candles);
-                    chart.timeScale().fitContent(); // ضبط الشارت ليظهر البيانات بوضوح
+                    chart.timeScale().fitContent();
                     clearLines();
                     
                     const badge = document.getElementById('signal-badge');
@@ -132,7 +318,7 @@ def home():
                     document.getElementById('p-live').innerText = data.current_price;
                     document.getElementById('p-entry').innerText = data.levels.entry;
                     document.getElementById('p-sl').innerText = data.levels.sl;
-                    document.getElementById('p-tp').innerText, document.getElementById('p-tp').innerText = data.levels.tp;
+                    document.getElementById('p-tp').innerText = data.levels.tp;
                     document.getElementById('source-tag').innerText = "المصدر: " + data.source;
                     
                     const warnBox = document.getElementById('warn-box');
