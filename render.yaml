@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: institutional-ai-engine
+    name: signal-engine
     env: docker
     plan: free
     autoDeploy: true
