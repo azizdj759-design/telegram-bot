@@ -7,7 +7,7 @@ import httpx
 import asyncio
 from datetime import datetime, timedelta
 
-app = FastAPI(title="Zero Reversal Signal Engine", version="42.0")
+app = FastAPI(title="Zero Reversal Signal Engine", version="44.0")
 
 TELEGRAM_TOKEN = "8741070555:AAGf6ys8UH8TZwlQpy_vWff9YONZ9BDmOok"
 SUBSCRIBERS = set()
@@ -24,21 +24,35 @@ async def sync_subscribers():
                 for update in data["result"]:
                     LAST_UPDATE_ID = update["update_id"]
                     if "message" in update and "chat" in update["message"]:
-                        SUBSCRIBERS.add(update["message"]["chat"]["id"])
-    except Exception:
-        pass
+                        cid = update["message"]["chat"]["id"]
+                        SUBSCRIBERS.add(cid)
+                        print(f"✅ مستخدم جديد انضم للتلغرام: {cid}")
+    except Exception as e:
+        print(f"Telegram Sync Error: {e}")
 
 async def send_telegram_message(message: str):
     await sync_subscribers() 
-    if not SUBSCRIBERS: return False
+    if not SUBSCRIBERS: 
+        print("⚠️ لا يوجد مشتركون في التلغرام. أرسل /start للبوت أولاً.")
+        return False
+    
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     async with httpx.AsyncClient() as client:
         for chat_id in list(SUBSCRIBERS):
             try:
                 await client.post(url, json={"chat_id": chat_id, "text": message, "parse_mode": "HTML"})
-            except:
-                pass
+            except Exception as e:
+                print(f"Telegram Send Error: {e}")
     return True
+
+# رابط لاختبار التلغرام مباشرة
+@app.get("/test-telegram")
+async def test_telegram():
+    success = await send_telegram_message("🚀 <b>النظام متصل!</b>\nهذه رسالة تجريبية للتأكد من وصول الإشعارات.")
+    if success:
+        return {"status": "success", "message": "تم إرسال الرسالة للتلغرام بنجاح!"}
+    else:
+        return {"status": "error", "message": "فشل الإرسال. تأكد من إرسال /start للبوت أولاً."}
 
 engines = {}
 
@@ -65,7 +79,6 @@ class MarketSimulator:
         else: self.base_price, self.volatility, self.decimals = 78.0, 0.8, 2
 
         self.current_price = self.base_price
-        # إعادة العدد الكبير من الشموع (5200)
         self.df_15m = self._generate_historical_data(5200)
 
     def _generate_historical_data(self, length):
@@ -251,11 +264,12 @@ class MarketSimulator:
         action = "WAIT"
         reason = "لا توجد صفقة نشطة. الشروط غير مكتملة."
         
+        # العتبة الصارمة 4.0 للزيرو انعكاس
         if self.active_trade is None and smc_strong:
-            if htf_trend == "BULLISH" and total_score >= 4.5 and not veto_buy:
+            if htf_trend == "BULLISH" and total_score >= 4.0 and not veto_buy:
                 action = "BUY"
                 reason = "توافق صاعد خارق (Zero Reversal)."
-            elif htf_trend == "BEARISH" and total_score <= -4.5 and not veto_sell:
+            elif htf_trend == "BEARISH" and total_score <= -4.0 and not veto_sell:
                 action = "SELL"
                 reason = "توافق هابط خارق (Zero Reversal)."
 
@@ -303,7 +317,6 @@ class MarketSimulator:
                     asyncio.create_task(send_telegram_message(f"❌ <b>تم ضرب وقف الخسارة ({self.symbol})</b>\nخسارة: -${t['loss_usd']}")) 
                     self.active_trade = None
 
-        # إرسال 5000 شمعة للشارت
         candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df_15m.tail(5000).iterrows()]
 
         return {
@@ -538,10 +551,9 @@ def home():
                 
                 if (intervalId) clearInterval(intervalId);
                 
-                // إضافة مهلة بسيطة لضمان مسح الشارت القديم قبل تحميل 5000 شمعة جديدة
                 setTimeout(() => {
                     fetchData();
-                    chart.timeScale().fitContent(); // سيقوم بتكبير الشارت ليعرض 5000 شمعة
+                    chart.timeScale().fitContent();
                     intervalId = setInterval(fetchData, 2000); 
                 }, 300);
             }
