@@ -7,7 +7,7 @@ import httpx
 import asyncio
 from datetime import datetime, timedelta
 
-app = FastAPI(title="Zero Reversal Signal Engine", version="41.0")
+app = FastAPI(title="Zero Reversal Signal Engine", version="42.0")
 
 TELEGRAM_TOKEN = "8741070555:AAGf6ys8UH8TZwlQpy_vWff9YONZ9BDmOok"
 SUBSCRIBERS = set()
@@ -48,7 +48,6 @@ class MarketSimulator:
         self.tick_count = 0
         self.active_trade = None 
         
-        # بذرة فريدة لكل عملة لضمان اختلاف الشارتات
         np.random.seed(sum([ord(c) for c in symbol]))
         
         if symbol == "BTCUSDT": self.base_price, self.volatility, self.decimals = 65000.0, 150.0, 2
@@ -66,7 +65,8 @@ class MarketSimulator:
         else: self.base_price, self.volatility, self.decimals = 78.0, 0.8, 2
 
         self.current_price = self.base_price
-        self.df_15m = self._generate_historical_data(1000)
+        # إعادة العدد الكبير من الشموع (5200)
+        self.df_15m = self._generate_historical_data(5200)
 
     def _generate_historical_data(self, length):
         dates = [datetime.now() - timedelta(minutes=15*i) for i in range(length)]
@@ -102,7 +102,7 @@ class MarketSimulator:
                 'Low': [self.current_price], 'Close': [self.current_price],
                 'Volume': [np.random.uniform(1000, 5000)]
             }, index=[new_time])
-            self.df_15m = pd.concat([self.df_15m, new_row]).tail(1000)
+            self.df_15m = pd.concat([self.df_15m, new_row]).tail(5200)
 
     def _add_indicators(self, df):
         df = df.copy()
@@ -130,7 +130,7 @@ class MarketSimulator:
         return df
 
     def calculate_pnl_and_pips(self, sl_dist, tp_dist):
-        lot_size = 0.01 # حساب ثابت لـ 0.01 لوت
+        lot_size = 0.01
         if self.symbol in ["EURUSD", "GBPUSD", "AUDUSD", "USDCAD"]:
             sl_pips = round(sl_dist / 0.0001); tp_pips = round(tp_dist / 0.0001)
             loss_usd = sl_pips * 0.10; profit_usd = tp_pips * 0.10
@@ -164,12 +164,9 @@ class MarketSimulator:
         strategies = {}
         total_score = 0
         smc_strong = False 
-        
-        # إشارات الرفض (Veto)
         veto_buy = False
         veto_sell = False
 
-        # 1. SMC
         swing_highs = df_15m[df_15m["Swing_High"]]["High"].tail(3).values
         swing_lows = df_15m[df_15m["Swing_Low"]]["Low"].tail(3).values
         
@@ -195,7 +192,6 @@ class MarketSimulator:
         strategies["SMC"] = {"name": "SMC (الهيكل والسيولة)", "status": smc_status, "detail": smc_detail, "score": smc_score}
         total_score += smc_score
 
-        # 2. ICT
         fvg_bull = df_15m["Low"] > df_15m["High"].shift(2)
         fvg_bear = df_15m["High"] < df_15m["Low"].shift(2)
         ict_status, ict_score, ict_detail = "لا توجد فجوات", 0, ""
@@ -208,7 +204,6 @@ class MarketSimulator:
         strategies["ICT"] = {"name": "ICT (الفجوات)", "status": ict_status, "detail": ict_detail, "score": ict_score}
         total_score += ict_score
 
-        # 3. Divergence
         div_status, div_score, div_detail = "لا يوجد", 0, ""
         recent_df = df_15m.tail(30)
         price_min_idx = recent_df['Low'].idxmin()
@@ -218,7 +213,7 @@ class MarketSimulator:
                 if recent_df.loc[price_min_idx, 'Low'] < recent_df.loc[prev_min_idx, 'Low'] and recent_df.loc[price_min_idx, 'RSI'] > recent_df.loc[prev_min_idx, 'RSI']:
                     div_status, div_score = "دايفرجنس صاعد", 1.5
                     div_detail = "السعر قاع أدنى، RSI قاع أعلى."
-                    veto_sell = True # يمنع البيع
+                    veto_sell = True
         
         price_max_idx = recent_df['High'].idxmax()
         if price_max_idx != recent_df.index[-1]:
@@ -227,11 +222,10 @@ class MarketSimulator:
                 if recent_df.loc[price_max_idx, 'High'] > recent_df.loc[prev_max_idx, 'High'] and recent_df.loc[price_max_idx, 'RSI'] < recent_df.loc[prev_max_idx, 'RSI']:
                     div_status, div_score = "دايفرجنس هابط", -1.5
                     div_detail = "السعر قمة أعلى، RSI قمة أدنى."
-                    veto_buy = True # يمنع الشراء
+                    veto_buy = True
         strategies["Divergence"] = {"name": "الدايفرجنس", "status": div_status, "detail": div_detail, "score": div_score}
         total_score += div_score
 
-        # 4. Elliott
         elliott_status, elliott_score, elliott_detail = "موجة تصحيحية", 0, ""
         if htf_trend == "BULLISH" and len(swing_highs) >= 2 and len(swing_lows) >= 2:
             if swing_highs[-1] > swing_highs[-2] and swing_lows[-1] > swing_lows[-2]:
@@ -244,7 +238,6 @@ class MarketSimulator:
         strategies["Elliott"] = {"name": "إليوت", "status": elliott_status, "detail": elliott_detail, "score": elliott_score}
         total_score += elliott_score
 
-        # 5. Technical
         tech_status, tech_score, tech_detail = "محايد", 0, f"RSI: {last['RSI']:.1f}"
         if last["RSI"] < 40 and last["MACD"] > last["Signal_Line"]:
             tech_status, tech_score = "تشبع بيعي", 1.0
@@ -255,25 +248,21 @@ class MarketSimulator:
         strategies["Technical"] = {"name": "الفني", "status": tech_status, "detail": tech_detail, "score": tech_score}
         total_score += tech_score
 
-        # --- القرار الصارم (Zero Reversal) ---
         action = "WAIT"
         reason = "لا توجد صفقة نشطة. الشروط غير مكتملة."
         
         if self.active_trade is None and smc_strong:
-            # شراء: لا يوجد دايفرجنس هابط + توافق 1H + عتبة 4.5
             if htf_trend == "BULLISH" and total_score >= 4.5 and not veto_buy:
                 action = "BUY"
                 reason = "توافق صاعد خارق (Zero Reversal)."
-            # بيع: لا يوجد دايفرجنس صاعد + توافق 1H + عتبة -4.5
             elif htf_trend == "BEARISH" and total_score <= -4.5 and not veto_sell:
                 action = "SELL"
                 reason = "توافق هابط خارق (Zero Reversal)."
 
         def clean(v): return 0.0 if pd.isna(v) or math.isinf(v) else round(float(v), self.decimals)
 
-        # --- إدارة المخاطر (R:R 1:4) ---
         sl_dist = 1.5 * atr
-        tp_dist = 6.0 * atr # زيادة الهدف لتحقيق أرباح محترمة
+        tp_dist = 6.0 * atr
         sl_pips, tp_pips, loss_usd, profit_usd = self.calculate_pnl_and_pips(sl_dist, tp_dist)
 
         entry, sl, tp = 0, 0, 0
@@ -282,7 +271,6 @@ class MarketSimulator:
             sl = clean(entry - sl_dist if action == "BUY" else entry + sl_dist)
             tp = clean(entry + tp_dist if action == "BUY" else entry - tp_dist)
 
-        # --- إرسال الإشعار ---
         if action != "WAIT":
             self.active_trade = {"action": action, "entry": entry, "sl": sl, "tp": tp, "loss_usd": loss_usd, "profit_usd": profit_usd}
             msg = f"🚀 <b>صفقة جديدة: {self.symbol}</b>\n\n"
@@ -298,7 +286,6 @@ class MarketSimulator:
             msg += f"• الدايفرجنس: {div_status}"
             asyncio.create_task(send_telegram_message(msg))
 
-        # --- مراقبة الصفقة (تثبيت الخسارة بدقة) ---
         if self.active_trade:
             t = self.active_trade
             if t["action"] == "BUY":
@@ -316,7 +303,8 @@ class MarketSimulator:
                     asyncio.create_task(send_telegram_message(f"❌ <b>تم ضرب وقف الخسارة ({self.symbol})</b>\nخسارة: -${t['loss_usd']}")) 
                     self.active_trade = None
 
-        candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df_15m.tail(300).iterrows()]
+        # إرسال 5000 شمعة للشارت
+        candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df_15m.tail(5000).iterrows()]
 
         return {
             "status": "ok", "current_price": clean(price), "action": action, "htf_trend": htf_trend, "reason": reason,
@@ -550,9 +538,10 @@ def home():
                 
                 if (intervalId) clearInterval(intervalId);
                 
+                // إضافة مهلة بسيطة لضمان مسح الشارت القديم قبل تحميل 5000 شمعة جديدة
                 setTimeout(() => {
                     fetchData();
-                    chart.timeScale().fitContent();
+                    chart.timeScale().fitContent(); // سيقوم بتكبير الشارت ليعرض 5000 شمعة
                     intervalId = setInterval(fetchData, 2000); 
                 }, 300);
             }
