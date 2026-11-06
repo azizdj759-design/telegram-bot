@@ -4,10 +4,10 @@ import numpy as np
 import pandas as pd
 import asyncio
 import json
-import yfinance as yf
-from datetime import datetime
+import httpx
+from datetime import datetime, timedelta
 
-app = FastAPI(title="Super Signal Engine", version="20.0")
+app = FastAPI(title="Super Signal Engine", version="21.0")
 
 class SignalEngine:
     def __init__(self, symbol, balance=30.0, risk_usd=3.0):
@@ -16,42 +16,59 @@ class SignalEngine:
         self.risk_usd = risk_usd # الخسارة القصوى 3 دولار
         self.df = pd.DataFrame()
         self.source = "Unknown"
-        
-        # ربط رموز المنصة برموز Yahoo Finance
-        self.yf_symbols = {
-            "XAUUSD": "GC=F",    # الذهب
-            "WTIUSD": "CL=F",    # النفط
-            "BTCUSDT": "BTC-USD" # البيتكوين
-        }
 
-    def fetch_historical_data(self):
-        yf_sym = self.yf_symbols.get(self.symbol, "BTC-USD")
-        try:
-            # جلب البيانات التاريخية فوراً
-            ticker = yf.Ticker(yf_sym)
-            hist = ticker.history(period="5d", interval="15m")
-            if not hist.empty:
-                self.df = hist[['Open', 'High', 'Low', 'Close', 'Volume']]
-                self.source = f"Yahoo Finance ({yf_sym})"
-                return True
-        except Exception as e:
-            print(f"Error fetching history: {e}")
+    async def fetch_data(self):
+        # 1. البيتكوين والذهب عبر OKX (سريع ومستقر على Render)
+        if self.symbol in ["BTCUSDT", "XAUUSD"]:
+            okx_symbol = "BTC-USDT" if self.symbol == "BTCUSDT" else "PAXG-USDT"
+            url = f"https://www.okx.com/api/v5/market/candles?instId={okx_symbol}&bar=15m&limit=300"
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    res = await client.get(url)
+                    data = res.json()
+                    if data.get("code") == "0":
+                        klines = data["data"]
+                        klines.reverse() # OKX يرجع الأحدث أولاً
+                        df = pd.DataFrame(klines).iloc[:, :6]
+                        df.columns = ['time', 'Open', 'High', 'Low', 'Close', 'Volume']
+                        df['time'] = pd.to_datetime(df['time'].astype(float), unit='ms')
+                        df.set_index('time', inplace=True)
+                        self.df = df.astype(float)
+                        self.source = f"OKX ({okx_symbol})"
+                        return True
+            except Exception as e:
+                print(f"OKX Error: {e}")
+
+        # 2. النفط عبر Yahoo Finance (مع محاولة تجنب الحظر)
+        elif self.symbol == "WTIUSD":
+            try:
+                import yfinance as yf
+                ticker = yf.Ticker("CL=F")
+                hist = ticker.history(period="5d", interval="15m")
+                if not hist.empty:
+                    self.df = hist[['Open', 'High', 'Low', 'Close', 'Volume']]
+                    self.source = "Yahoo Finance (Oil)"
+                    return True
+            except Exception as e:
+                print(f"Yahoo Error: {e}")
+
+        # 3. خطة الطوارئ (محاكاة) لضمان عدم تعليق الواجهة
+        if self.df.empty or len(self.df) < 200:
+            dates = [datetime.now() - timedelta(minutes=15*i) for i in range(300)]
+            dates.reverse()
+            base_price = 60000 if "BTC" in self.symbol else (2400 if "XAU" in self.symbol else 80)
+            prices = [base_price + np.random.uniform(-base_price*0.01, base_price*0.01) for _ in range(300)]
+            df = pd.DataFrame({
+                'Open': prices, 'High': [p + np.random.uniform(10, 50) for p in prices],
+                'Low': [p - np.random.uniform(10, 50) for p in prices],
+                'Close': [p + np.random.uniform(-20, 20) for p in prices],
+                'Volume': [np.random.uniform(100, 1000) for _ in range(300)]
+            }, index=dates)
+            self.df = df
+            self.source = "Simulation (Fallback)"
+            return True
+
         return False
-
-    def update_live_candle(self):
-        # تحديث الشمعة الأخيرة بسعر اللحظة (محاكاة خفيفة لتجنب الحظر)
-        yf_sym = self.yf_symbols.get(self.symbol, "BTC-USD")
-        try:
-            ticker = yf.Ticker(yf_sym)
-            # جلب شمعة واحدة فقط لتحديث السعر
-            latest = ticker.history(period="1d", interval="1m").tail(1)
-            if not latest.empty:
-                live_price = latest['Close'].iloc[-1]
-                self.df.iloc[-1, self.df.columns.get_loc('Close')] = live_price
-                self.df.iloc[-1, self.df.columns.get_loc('High')] = max(self.df.iloc[-1]['High'], live_price)
-                self.df.iloc[-1, self.df.columns.get_loc('Low')] = min(self.df.iloc[-1]['Low'], live_price)
-        except:
-            pass
 
     def analyze(self):
         if len(self.df) < 200:
@@ -74,20 +91,20 @@ class SignalEngine:
         low_close = np.abs(df["Low"] - df["Close"].shift())
         df["ATR"] = (pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)).rolling(14).mean()
 
-        # 2. SMC (الهيكل)
+        # 2. SMC
         df["Swing_High"] = df["High"] == df["High"].rolling(5).max()
         df["Swing_Low"] = df["Low"] == df["Low"].rolling(5).min()
         last_swing_high = df[df["Swing_High"]]["High"].iloc[-1] if not df[df["Swing_High"]].empty else 0
         last_swing_low = df[df["Swing_Low"]]["Low"].iloc[-1] if not df[df["Swing_Low"]].empty else 0
 
-        # 3. ICT (الفجوات والبلوكات)
+        # 3. ICT
         df["FVG_Bull"] = df["Low"] > df["High"].shift(2)
         df["FVG_Bear"] = df["High"] < df["Low"].shift(2)
         df["OB_Bull"] = (df["Close"].shift(1) < df["Open"].shift(1)) & (df["Close"] > df["High"].shift(1))
         df["OB_Bear"] = (df["Close"].shift(1) > df["Open"].shift(1)) & (df["Close"] < df["Low"].shift(1))
 
-        last = df.iloc[-2] # آخر شمعة مغلقة
-        price = df.iloc[-1]["Close"] # السعر الحالي
+        last = df.iloc[-2]
+        price = df.iloc[-1]["Close"]
         atr = last["ATR"]
 
         strategies = {}
@@ -139,9 +156,7 @@ class SignalEngine:
             entry = price
             sl = entry - sl_dist if action == "BUY" else entry + sl_dist
             tp = entry + (3.0 * atr) if action == "BUY" else entry - (3.0 * atr)
-            # حجم المركز لخسارة 3 دولار
             position_size = self.risk_usd / sl_dist
-            
             if position_size < 0.0001:
                 warning_msg = "⚠️ حجم اللوت صغير جداً! قد يرفضه البروكر."
             entry, sl, tp = round(entry, 2), round(sl, 2), round(tp, 2)
@@ -163,21 +178,14 @@ async def websocket_endpoint(websocket: WebSocket, symbol: str):
     await websocket.accept()
     engine = SignalEngine(symbol=symbol, balance=30.0, risk_usd=3.0)
     
-    # 1. جلب البيانات التاريخية فوراً
-    await asyncio.to_thread(engine.fetch_historical_data)
+    # جلب البيانات التاريخية فوراً
+    await engine.fetch_data()
     
     try:
         while True:
-            # 2. تحديث السعر اللحظي
-            await asyncio.to_thread(engine.update_live_candle)
-            
-            # 3. إرسال التحليل
             result = engine.analyze()
             await websocket.send_text(json.dumps(result))
-            
-            # انتظار 15 ثانية قبل التحديث القادم (لتجنب حظر Yahoo)
-            await asyncio.sleep(15)
-                
+            await asyncio.sleep(5) # تحديث كل 5 ثوانٍ
     except WebSocketDisconnect:
         pass
     except Exception as e:
@@ -278,7 +286,6 @@ def home():
                 if (ws) { ws.onclose = null; ws.close(); }
                 currentSymbol = symbol;
                 
-                // تحديث شكل الأزرار
                 document.querySelectorAll('.m-btn').forEach(b => b.classList.remove('active'));
                 document.getElementById('btn-' + symbol).classList.add('active');
                 
