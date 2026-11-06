@@ -1,24 +1,33 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.responses import HTMLResponse
 import numpy as np
 import pandas as pd
 import asyncio
 import json
 import httpx
+import yfinance as yf
 from datetime import datetime, timedelta
+import time
 
-app = FastAPI(title="Super Signal Engine", version="21.0")
+app = FastAPI(title="Super Signal Engine", version="22.0")
 
 class SignalEngine:
     def __init__(self, symbol, balance=30.0, risk_usd=3.0):
         self.symbol = symbol
         self.balance = balance
-        self.risk_usd = risk_usd # الخسارة القصوى 3 دولار
+        self.risk_usd = risk_usd
         self.df = pd.DataFrame()
         self.source = "Unknown"
+        self.last_fetch_time = 0
 
     async def fetch_data(self):
-        # 1. البيتكوين والذهب عبر OKX (سريع ومستقر على Render)
+        # منع جلب البيانات بشكل متكرر جداً
+        if time.time() - self.last_fetch_time < 10:
+            return
+        
+        self.last_fetch_time = time.time()
+
+        # 1. البيتكوين والذهب عبر OKX
         if self.symbol in ["BTCUSDT", "XAUUSD"]:
             okx_symbol = "BTC-USDT" if self.symbol == "BTCUSDT" else "PAXG-USDT"
             url = f"https://www.okx.com/api/v5/market/candles?instId={okx_symbol}&bar=15m&limit=300"
@@ -28,31 +37,32 @@ class SignalEngine:
                     data = res.json()
                     if data.get("code") == "0":
                         klines = data["data"]
-                        klines.reverse() # OKX يرجع الأحدث أولاً
+                        klines.reverse()
                         df = pd.DataFrame(klines).iloc[:, :6]
                         df.columns = ['time', 'Open', 'High', 'Low', 'Close', 'Volume']
                         df['time'] = pd.to_datetime(df['time'].astype(float), unit='ms')
                         df.set_index('time', inplace=True)
                         self.df = df.astype(float)
                         self.source = f"OKX ({okx_symbol})"
-                        return True
+                        return
             except Exception as e:
                 print(f"OKX Error: {e}")
 
-        # 2. النفط عبر Yahoo Finance (مع محاولة تجنب الحظر)
+        # 2. النفط عبر Yahoo Finance (مع محاولة إعادة المحاولة)
         elif self.symbol == "WTIUSD":
-            try:
-                import yfinance as yf
-                ticker = yf.Ticker("CL=F")
-                hist = ticker.history(period="5d", interval="15m")
-                if not hist.empty:
-                    self.df = hist[['Open', 'High', 'Low', 'Close', 'Volume']]
-                    self.source = "Yahoo Finance (Oil)"
-                    return True
-            except Exception as e:
-                print(f"Yahoo Error: {e}")
+            for attempt in range(2):
+                try:
+                    ticker = yf.Ticker("CL=F")
+                    hist = ticker.history(period="5d", interval="15m")
+                    if not hist.empty:
+                        self.df = hist[['Open', 'High', 'Low', 'Close', 'Volume']]
+                        self.source = "Yahoo Finance (Oil)"
+                        return
+                except Exception as e:
+                    print(f"Yahoo Error (attempt {attempt+1}): {e}")
+                    await asyncio.sleep(2)
 
-        # 3. خطة الطوارئ (محاكاة) لضمان عدم تعليق الواجهة
+        # 3. خطة الطوارئ (محاكاة)
         if self.df.empty or len(self.df) < 200:
             dates = [datetime.now() - timedelta(minutes=15*i) for i in range(300)]
             dates.reverse()
@@ -66,9 +76,6 @@ class SignalEngine:
             }, index=dates)
             self.df = df
             self.source = "Simulation (Fallback)"
-            return True
-
-        return False
 
     def analyze(self):
         if len(self.df) < 200:
@@ -76,7 +83,6 @@ class SignalEngine:
         
         df = self.df.copy()
         
-        # 1. المؤشرات الفنية
         df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
         df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
         df["EMA_200"] = df["Close"].ewm(span=200, adjust=False).mean()
@@ -91,13 +97,11 @@ class SignalEngine:
         low_close = np.abs(df["Low"] - df["Close"].shift())
         df["ATR"] = (pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)).rolling(14).mean()
 
-        # 2. SMC
         df["Swing_High"] = df["High"] == df["High"].rolling(5).max()
         df["Swing_Low"] = df["Low"] == df["Low"].rolling(5).min()
         last_swing_high = df[df["Swing_High"]]["High"].iloc[-1] if not df[df["Swing_High"]].empty else 0
         last_swing_low = df[df["Swing_Low"]]["Low"].iloc[-1] if not df[df["Swing_Low"]].empty else 0
 
-        # 3. ICT
         df["FVG_Bull"] = df["Low"] > df["High"].shift(2)
         df["FVG_Bear"] = df["High"] < df["Low"].shift(2)
         df["OB_Bull"] = (df["Close"].shift(1) < df["Open"].shift(1)) & (df["Close"] > df["High"].shift(1))
@@ -109,7 +113,6 @@ class SignalEngine:
 
         strategies = {}
 
-        # SMC
         if price > last_swing_high:
             strategies["SMC"] = {"name": "SMC (كسر هيكل صاعد)", "status": "اختراق قمة سابقة (BOS)", "score": 2.0}
         elif price < last_swing_low:
@@ -117,7 +120,6 @@ class SignalEngine:
         else:
             strategies["SMC"] = {"name": "SMC", "status": "داخل نطاق السيولة", "score": 0}
 
-        # ICT
         if last["FVG_Bull"] or last["OB_Bull"]:
             strategies["ICT"] = {"name": "ICT (فجوة/بلوك)", "status": "فجوة أو بلوك أوامر شرائي", "score": 1.5}
         elif last["FVG_Bear"] or last["OB_Bear"]:
@@ -125,7 +127,6 @@ class SignalEngine:
         else:
             strategies["ICT"] = {"name": "ICT", "status": "لا توجد فجوات نشطة", "score": 0}
 
-        # Elliott
         if last["EMA_21"] > last["EMA_200"] and price > last["EMA_50"]:
             strategies["Elliott"] = {"name": "إليوت", "status": "موجة دافعة صاعدة (3/5)", "score": 1.0}
         elif last["EMA_21"] < last["EMA_200"] and price < last["EMA_50"]:
@@ -133,7 +134,6 @@ class SignalEngine:
         else:
             strategies["Elliott"] = {"name": "إليوت", "status": "موجة تصحيحية", "score": 0}
 
-        # Technical
         if last["RSI"] < 35:
             strategies["Technical"] = {"name": "الفني (RSI)", "status": f"تشبع بيعي ({last['RSI']:.1f})", "score": 1.0}
         elif last["RSI"] > 65:
@@ -147,7 +147,6 @@ class SignalEngine:
         if total_score >= 4.0: action = "BUY"
         elif total_score <= -4.0: action = "SELL"
 
-        # إدارة المخاطر (خسارة 3 دولار)
         sl_dist = 1.5 * atr
         position_size = 0
         warning_msg = ""
@@ -173,19 +172,28 @@ class SignalEngine:
             "source": self.source
         }
 
+# --- نقطة نهاية للحفاظ على نشاط التطبيق (Keep-Alive) ---
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+
 @app.websocket("/ws/{symbol}")
 async def websocket_endpoint(websocket: WebSocket, symbol: str):
     await websocket.accept()
-    engine = SignalEngine(symbol=symbol, balance=30.0, risk_usd=3.0)
+    engine = SignalEngine(symbol=symbol)
     
-    # جلب البيانات التاريخية فوراً
-    await engine.fetch_data()
+    # بدء مهمة جلب البيانات في الخلفية
+    asyncio.create_task(engine.fetch_data())
     
     try:
         while True:
+            # محاولة جلب البيانات إذا لم تكن جاهزة بعد
+            if len(engine.df) < 200:
+                await engine.fetch_data()
+            
             result = engine.analyze()
             await websocket.send_text(json.dumps(result))
-            await asyncio.sleep(5) # تحديث كل 5 ثوانٍ
+            await asyncio.sleep(3) # تحديث كل 3 ثوانٍ
     except WebSocketDisconnect:
         pass
     except Exception as e:
@@ -222,7 +230,6 @@ def home():
             .source-tag { font-size: 9px; color: #666; text-align: center; margin-top: 4px; }
             .chart-wrap { flex: 1; background: #000; position: relative; }
             #chart { width: 100%; height: 100%; }
-            /* Mobile Responsive */
             @media (max-width: 768px) {
                 .layout { flex-direction: column; }
                 .panel { width: 100%; border-left: none; border-bottom: 1px solid #121212; height: 50%; }
