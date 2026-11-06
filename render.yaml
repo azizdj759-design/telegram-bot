@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: signal-engine
+    name: crypto-signal-app
     env: docker
     plan: free
     autoDeploy: true
