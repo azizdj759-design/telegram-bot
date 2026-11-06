@@ -4,57 +4,49 @@ import numpy as np
 import pandas as pd
 import asyncio
 import json
-import websockets
 import httpx
+from datetime import datetime
 
-app = FastAPI(title="Super Institutional Signal Engine", version="15.0")
+app = FastAPI(title="Super Institutional Signal Engine", version="16.0")
 
 class SuperSignalEngine:
-    def __init__(self, symbol="BTC_USDT", account_balance=30.0, risk_pct=0.01):
-        # WhiteBIT تستخدم صيغة BTC_USDT بدلاً من BTCUSDT
+    def __init__(self, symbol="BTCUSDT", account_balance=30.0, risk_pct=0.01):
         self.symbol = symbol
         self.balance = account_balance
         self.risk_pct = risk_pct
         self.df = pd.DataFrame()
         
-    async def fetch_historical_data(self):
-        # جلب البيانات التاريخية من WhiteBIT (لا يوجد حظر لخوادم Render)
-        url = f"https://whitebit.com/api/v4/public/kline?market={self.symbol}&interval=15m&limit=300"
+    async def fetch_latest_data(self):
+        # تحويل الرمز ليتوافق مع Coinbase (مثلاً BTCUSDT تصبح BTC-USD)
+        coinbase_symbol = self.symbol.replace("USDT", "-USD")
+        url = f"https://api.exchange.coinbase.com/products/{coinbase_symbol}/candles?granularity=900" # 900 ثانية = 15 دقيقة
         
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
             try:
-                response = await client.get(url)
+                response = await client.get(url, headers=headers)
                 response.raise_for_status()
                 data = response.json()
                 
-                # WhiteBIT ترجع البيانات كمصفوفة: [timestamp, open, close, high, low, volume]
-                df = pd.DataFrame(data, columns=['time', 'Open', 'Close', 'High', 'Low', 'Volume'])
+                # Coinbase ترجع البيانات كـ: [time, low, high, open, close, volume] من الأحدث للأقدم
+                # نقوم بعكسها لتصبح من الأقدم للأحدث
+                data.reverse()
+                
+                df = pd.DataFrame(data, columns=['time', 'Low', 'High', 'Open', 'Close', 'Volume'])
                 df['time'] = pd.to_datetime(df['time'], unit='s')
                 df.set_index('time', inplace=True)
-                # إعادة ترتيب الأعمدة لتطابق التنسيق المطلوب
-                self.df = df[['Open', 'High', 'Low', 'Close', 'Volume']].astype(float)
                 
+                # ترتيب الأعمدة كما يتوقعها المحرك
+                self.df = df[['Open', 'High', 'Low', 'Close', 'Volume']].astype(float)
+                return True
             except Exception as e:
-                raise Exception(f"فشل جلب البيانات من WhiteBIT: {e}")
-
-    def update_live_data(self, kline_data):
-        # تحديث الشمعة الحالية من البث اللحظي
-        new_row = pd.DataFrame([{
-            "Open": float(kline_data['open']), "High": float(kline_data['high']),
-            "Low": float(kline_data['low']), "Close": float(kline_data['close']), 
-            "Volume": float(kline_data['volume'])
-        }], index=[pd.to_datetime(kline_data['time'], unit='s')])
-        
-        if not self.df.empty and self.df.index[-1] == new_row.index[0]:
-            self.df.iloc[-1] = new_row.iloc[0]
-        else:
-            self.df = pd.concat([self.df, new_row])
-        if len(self.df) > 500: 
-            self.df = self.df.tail(500)
+                print(f"Error fetching data: {e}")
+                return False
 
     def analyze_strategies(self):
         if len(self.df) < 200: 
-            return None
+            return {"status": "loading", "message": "جاري جمع البيانات (تحتاج 200 شمعة)..."}
         
         df = self.df.copy()
         
@@ -73,25 +65,25 @@ class SuperSignalEngine:
         low_close = np.abs(df["Low"] - df["Close"].shift())
         df["ATR"] = (pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)).rolling(14).mean()
 
-        # SMC
+        # SMC (Swing Highs/Lows)
         df["Swing_High"] = df["High"] == df["High"].rolling(5).max()
         df["Swing_Low"] = df["Low"] == df["Low"].rolling(5).min()
         last_swing_high = df[df["Swing_High"]]["High"].iloc[-1] if not df[df["Swing_High"]].empty else 0
         last_swing_low = df[df["Swing_Low"]]["Low"].iloc[-1] if not df[df["Swing_Low"]].empty else 0
 
-        # ICT
+        # ICT (Fair Value Gaps & Order Blocks)
         df["FVG_Bull"] = df["Low"] > df["High"].shift(2)
         df["FVG_Bear"] = df["High"] < df["Low"].shift(2)
         df["OB_Bull"] = (df["Close"].shift(1) < df["Open"].shift(1)) & (df["Close"] > df["High"].shift(1))
         df["OB_Bear"] = (df["Close"].shift(1) > df["Open"].shift(1)) & (df["Close"] < df["Low"].shift(1))
 
-        last_closed = df.iloc[-2] # الشمعة المغلقة
+        last_closed = df.iloc[-2] # نستخدم الشمعة المغلقة
         live_price = df.iloc[-1]["Close"] # السعر الحالي
         atr = last_closed["ATR"]
 
         strategies = {}
 
-        # SMC
+        # 1. SMC
         if live_price > last_swing_high:
             strategies["SMC"] = {"name": "SMC (كسر هيكل صاعد)", "status": "اختراق قمة سابقة (BOS صاعد)", "score": 2.0}
         elif live_price < last_swing_low:
@@ -99,7 +91,7 @@ class SuperSignalEngine:
         else:
             strategies["SMC"] = {"name": "SMC", "status": "داخل نطاق السيولة", "score": 0}
 
-        # ICT
+        # 2. ICT
         if last_closed["FVG_Bull"] or last_closed["OB_Bull"]:
             strategies["ICT"] = {"name": "ICT (فجوة/بلوك)", "status": "فجوة أو بلوك أوامر شرائي", "score": 1.5}
         elif last_closed["FVG_Bear"] or last_closed["OB_Bear"]:
@@ -107,7 +99,7 @@ class SuperSignalEngine:
         else:
             strategies["ICT"] = {"name": "ICT", "status": "لا توجد فجوات نشطة", "score": 0}
 
-        # Elliott
+        # 3. Elliott Wave
         if last_closed["EMA_21"] > last_closed["EMA_200"] and live_price > last_closed["EMA_50"]:
             strategies["Elliott"] = {"name": "إليوت", "status": "موجة دافعة صاعدة (3/5)", "score": 1.0}
         elif last_closed["EMA_21"] < last_closed["EMA_200"] and live_price < last_closed["EMA_50"]:
@@ -115,7 +107,7 @@ class SuperSignalEngine:
         else:
             strategies["Elliott"] = {"name": "إليوت", "status": "موجة تصحيحية", "score": 0}
 
-        # Technical
+        # 4. Technical (RSI)
         if last_closed["RSI"] < 35:
             strategies["Technical"] = {"name": "الفني (RSI)", "status": f"تشبع بيعي ({last_closed['RSI']:.1f})", "score": 1.0}
         elif last_closed["RSI"] > 65:
@@ -125,6 +117,7 @@ class SuperSignalEngine:
 
         total_score = sum([s["score"] for s in strategies.values()])
 
+        # القرار (نحتاج 4 نقاط على الأقل)
         action = "WAIT"
         if total_score >= 4.0: action = "BUY"
         elif total_score <= -4.0: action = "SELL"
@@ -160,47 +153,26 @@ class SuperSignalEngine:
 @app.websocket("/ws/{symbol}")
 async def websocket_endpoint(websocket: WebSocket, symbol: str):
     await websocket.accept()
-    # تحويل الرمز من BTCUSDT إلى BTC_USDT
-    wb_symbol = symbol.replace("USDT", "_USDT")
-    engine = SuperSignalEngine(symbol=wb_symbol, account_balance=30.0, risk_pct=0.01)
+    engine = SuperSignalEngine(symbol=symbol, account_balance=30.0, risk_pct=0.01)
     
     try:
-        # 1. جلب البيانات التاريخية
-        await engine.fetch_historical_data()
-        initial_result = engine.analyze_strategies()
-        if initial_result:
-            await websocket.send_text(json.dumps(initial_result))
-        
-        # 2. البث اللحظي من WhiteBIT
-        # WhiteBIT WebSocket: wss://api.whitebit.com/ws
-        async with websockets.connect("wss://api.whitebit.com/ws") as wb_ws:
-            # الاشتراك في قناة kline لفريم 15 دقيقة
-            subscribe_msg = {
-                "method": "kline_subscribe",
-                "params": [wb_symbol, "15m"],
-                "id": 1
-            }
-            await wb_ws.send(json.dumps(subscribe_msg))
+        while True:
+            # جلب البيانات كل 3 ثوانٍ (تحديث شبه لحظي)
+            success = await engine.fetch_latest_data()
             
-            while True:
-                msg = await wb_ws.recv()
-                data = json.loads(msg)
+            if success:
+                result = engine.analyze_strategies()
+                await websocket.send_text(json.dumps(result))
+            else:
+                error_msg = json.dumps({"status": "error", "message": "تعذر الاتصال بمصدر البيانات. جاري إعادة المحاولة..."})
+                await websocket.send_text(error_msg)
                 
-                # التحقق من أن الرسالة هي تحديث شمعة
-                if "params" in data and data.get("method") == "kline_update":
-                    kline = data["params"][0]
-                    engine.update_live_data(kline)
-                    
-                    result = engine.analyze_strategies()
-                    if result:
-                        await websocket.send_text(json.dumps(result))
+            await asyncio.sleep(3)
                 
+    except WebSocketDisconnect:
+        pass
     except Exception as e:
-        error_msg = json.dumps({"status": "error", "message": f"خطأ: {str(e)}"})
-        try:
-            await websocket.send_text(error_msg)
-        except:
-            pass
+        print(f"WebSocket Error: {e}")
 
 @app.get("/", response_class=HTMLResponse)
 def home():
@@ -294,9 +266,9 @@ def home():
                 ws.onmessage = function(event) {
                     let data = JSON.parse(event.data);
                     
-                    if (data.status === 'error') {
+                    if (data.status === 'error' || data.status === 'loading') {
                         document.getElementById('signal-badge').innerText = data.message;
-                        document.getElementById('signal-badge').className = 'badge-sell';
+                        document.getElementById('signal-badge').className = 'badge-wait';
                         return;
                     }
 
