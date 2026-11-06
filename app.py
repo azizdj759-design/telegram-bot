@@ -1,191 +1,173 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 import numpy as np
 import pandas as pd
 import asyncio
 import json
 import yfinance as yf
+from datetime import datetime, timedelta
 
-app = FastAPI(title="Ultimate Institutional AI Engine v7", version="7.0")
-
+app = FastAPI(title="Institutional AI Engine - Corrected", version="8.0")
 
 class AdvancedInstitutionalEngine:
+    def __init__(self, symbol="GC=F", period="180d", interval="1h", account_balance=20.0):
+        self.symbol = symbol
+        self.period = period
+        self.interval = interval
+        self.account_balance = account_balance  # رصيد الحساب الافتراضي
+        self.risk_per_trade = 0.01  # المخاطرة 1% من الحساب
+        self.df = None
 
-  def __init__(self, symbol="GC=F", period="180d", interval="1h"):
-    self.symbol = symbol
-    self.period = period
-    self.interval = interval
-    self.df = None
+    def fetch_and_process(self):
+        ticker = yf.Ticker(self.symbol)
+        raw_df = ticker.history(period=self.period, interval=self.interval)
+        
+        if raw_df.empty:
+            return False
+            
+        # إزالة الشمعة الحالية غير المكتملة لمنع تغير الإشارة (Repainting)
+        self.df = raw_df[["Open", "High", "Low", "Close", "Volume"]].dropna().iloc[:-1]
+        df = self.df.copy()
 
-  def fetch_and_process(self):
-    ticker = yf.Ticker(self.symbol)
-    self.df = ticker.history(period=self.period, interval=self.interval)
-    if self.df.empty:
-      raise HTTPException(status_code=500, detail="فشل في جلب بيانات السوق.")
-    df = self.df[["Open", "High", "Low", "Close", "Volume"]].dropna()
+        # المؤشرات الأساسية (بدون تسريب بيانات مستقبلية)
+        df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
+        df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
+        df["EMA_200"] = df["Close"].ewm(span=200, adjust=False).mean()
 
-    df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
-    df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
-    df["EMA_200"] = df["Close"].ewm(span=200, adjust=False).mean()
+        delta = df["Close"].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        df["RSI"] = 100 - (100 / (1 + (gain / loss)))
 
-    delta = df["Close"].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    df["RSI"] = 100 - (100 / (1 + (gain / loss)))
+        high_low = df["High"] - df["Low"]
+        high_close = np.abs(df["High"] - df["Close"].shift())
+        low_close = np.abs(df["Low"] - df["Close"].shift())
+        df["ATR"] = (pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)).rolling(14).mean()
 
-    high_low = df["High"] - df["Low"]
-    high_close = np.abs(df["High"] - df["Close"].shift())
-    low_close = np.abs(df["Low"] - df["Close"].shift())
-    df["ATR"] = (
-        pd.concat([high_low, high_close, low_close], axis=1)
-        .max(axis=1)
-        .rolling(14)
-        .mean()
-    )
+        # تصحيح FVG (Fair Value Gap) الحقيقي: فجوة بين الشمعة الحالية وشمعة قبل شمعتين
+        # Bullish FVG: Low[current] > High[current-2]
+        df["FVG_Bullish"] = df["Low"] > df["High"].shift(2)
+        # Bearish FVG: High[current] < Low[current-2]
+        df["FVG_Bearish"] = df["High"] < df["Low"].shift(2)
 
-    df["FVG_Bullish"] = (df["Low"].shift(-1) > df["High"].shift(1)) & (
-        df["Close"] > df["Open"]
-    )
-    df["FVG_Bearish"] = (df["High"].shift(-1) < df["Low"].shift(1)) & (
-        df["Close"] < df["Open"]
-    )
-    df["Order_Block_Buy"] = (df["Close"].shift(1) < df["Open"].shift(1)) & (
-        df["Close"] > df["Open"] * 1.001
-    )
-    df["Order_Block_Sell"] = (df["Close"].shift(1) > df["Open"].shift(1)) & (
-        df["Close"] < df["Open"] * 0.999
-    )
+        # تصحيح Order Blocks: شمعة خمراء سابقة اخترقها السعر لأعلى (Buy OB) أو العكس
+        df["Order_Block_Buy"] = (df["Close"].shift(1) < df["Open"].shift(1)) & (df["Close"] > df["High"].shift(1))
+        df["Order_Block_Sell"] = (df["Close"].shift(1) > df["Open"].shift(1)) & (df["Close"] < df["Low"].shift(1))
 
-    window = 5
-    df["Swing_High"] = (
-        df["High"] == df["High"].rolling(window=window, center=True).max()
-    )
-    df["Swing_Low"] = (
-        df["Low"] == df["Low"].rolling(window=window, center=True).min()
-    )
-    self.df = df
+        # تصحيح Swing High/Low (بدون center=True)
+        df["Swing_High"] = (df["High"] == df["High"].rolling(window=5).max().shift(1))
+        df["Swing_Low"] = (df["Low"] == df["Low"].rolling(window=5).min().shift(1))
 
-  def analyze_market(self):
-    self.fetch_and_process()
-    last = self.df.iloc[-1]
-    price = float(last["Close"])
-    atr = float(last["ATR"])
-    rsi = float(last["RSI"])
+        self.df = df
+        return True
 
-    # 1. تحليل تفصيلي لكل استراتيجية على حدة
-    strategies = {}
+    def analyze_market(self):
+        if not self.fetch_and_process():
+            return {"error": "Failed to fetch data"}
 
-    # SMC Strategy
-    smc_val = 1.0 if last["Order_Block_Buy"] else (-1.0 if last["Order_Block_Sell"] else (0.5 if price > last["EMA_50"] else -0.5))
-    strategies["SMC"] = {
-        "name": "مفاهيم الأموال الذكية (SMC)",
-        "status": "منطقة أوامر شرائية نشطة" if smc_val > 0 else "منطقة أوامر بيعية نشطة",
-        "score": smc_val
-    }
+        last = self.df.iloc[-1]
+        price = float(last["Close"])
+        atr = float(last["ATR"])
+        rsi = float(last["RSI"])
 
-    # ICT Strategy
-    ict_val = 1.2 if last["FVG_Bullish"] else (-1.2 if last["FVG_Bearish"] else (0.4 if price > last["EMA_21"] else -0.4))
-    strategies["ICT"] = {
-        "name": "استراتيجيات الفجوات (ICT FVG)",
-        "status": "احترام الفجوة السعرية الصاعدة" if ict_val > 0 else "احترام الفجوة السعرية الهابطة",
-        "score": ict_val
-    }
+        # --- التحليل التفصيلي (بناء على شموع مغلقة فقط) ---
+        strategies = {}
+        
+        # 1. SMC (Smart Money Concepts)
+        smc_val = 1.0 if last["Order_Block_Buy"] else (-1.0 if last["Order_Block_Sell"] else (0.5 if price > last["EMA_50"] else -0.5))
+        strategies["SMC"] = {
+            "name": "مفاهيم الأموال الذكية (SMC)",
+            "status": "اختراق Order Block شرائي" if last["Order_Block_Buy"] else ("اختراق Order Block بيعي" if last["Order_Block_Sell"] else "لا يوجد Order Block نشط"),
+            "score": smc_val
+        }
 
-    # Elliott Wave
-    strategies["Elliott"] = {
-        "name": "موجات أليوت الهيكلية",
-        "status": "موجة دافعة صاعدة قيد الإنشقاق" if price > last["EMA_50"] else "موجة تصحيحية هابطة",
-        "score": 0.8 if price > last["EMA_50"] else -0.8
-    }
+        # 2. ICT (Fair Value Gaps)
+        ict_val = 1.2 if last["FVG_Bullish"] else (-1.2 if last["FVG_Bearish"] else (0.4 if price > last["EMA_21"] else -0.4))
+        strategies["ICT"] = {
+            "name": "فجوات السعر (ICT FVG)",
+            "status": "فجوة صاعدة (Bullish FVG)" if last["FVG_Bullish"] else ("فجوة هابطة (Bearish FVG)" if last["FVG_Bearish"] else "لا توجد فجوات سعرية"),
+            "score": ict_val
+        }
 
-    # Wyckoff
-    strategies["Wyckoff"] = {
-        "name": "منهجية ويكوف للتجميع والتصريف",
-        "status": "مرحلة اختبار السيولة ونطاق التجميع" if rsi < 50 else "مرحلة ضغط بيعي مؤسسي",
-        "score": 0.6 if rsi < 50 else -0.6
-    }
+        # 3. Elliott Wave (مبسط)
+        strategies["Elliott"] = {
+            "name": "موجات أليوت الهيكلية",
+            "status": "موجة دافعة صاعدة" if price > last["EMA_50"] and last["EMA_50"] > last["EMA_200"] else "موجة تصحيحية هابطة",
+            "score": 0.8 if price > last["EMA_50"] and last["EMA_50"] > last["EMA_200"] else -0.8
+        }
 
-    # Volume Profile
-    strategies["Volume"] = {
-        "name": "بروفايل الحجوم وتدفق السيولة",
-        "status": "التداول فوق نقطة التحكم بالحجم (POC)" if price > last["EMA_21"] else "التداول تحت نقطة التحكم بالحجم",
-        "score": 0.7 if price > last["EMA_21"] else -0.7
-    }
+        # 4. Wyckoff
+        strategies["Wyckoff"] = {
+            "name": "منهجية ويكوف (السيولة)",
+            "status": "مرحلة تجميع" if rsi < 40 and price > last["EMA_200"] else ("مرحلة تصريف" if rsi > 60 else "منطقة متذبذبة"),
+            "score": 0.6 if rsi < 40 else (-0.6 if rsi > 60 else 0)
+        }
 
-    # Technicals
-    tech_val = 1.0 if last["EMA_50"] > last["EMA_200"] else -1.0
-    strategies["Technical"] = {
-        "name": "التحليل الفني والزخم (RSI / EMA)",
-        "status": f"مؤشر القوة النسبية عند مستوى {rsi:.1f} مع تقاطع المتوسطات",
-        "score": tech_val
-    }
+        # 5. Technical
+        strategies["Technical"] = {
+            "name": "الزخم الفني (RSI / EMAs)",
+            "status": f"RSI: {rsi:.1f} | الاتجاه: {'صاعد' if last['EMA_50'] > last['EMA_200'] else 'هابط'}",
+            "score": 1.0 if last["EMA_50"] > last["EMA_200"] and rsi < 70 else -1.0 if last["EMA_50"] < last["EMA_200"] else 0
+        }
 
-    # News & Macro Sentiment Simulation
-    news_val = 0.5 if "GC" in self.symbol or "BTC" in self.symbol else -0.2
-    strategies["News"] = {
-        "name": "تحليل الأخبار والبيانات الاقتصادية",
-        "status": "البيانات الكلية والسياسة النقدية تدعم الأصول الحالية",
-        "score": news_val
-    }
+        # حساب المجموع الكلي
+        total_score = sum([s["score"] for s in strategies.values()])
+        
+        # إشارة نهائية حازمة
+        if total_score >= 2.0:
+            action = "BUY"
+            title = "إشارة شراء مؤسسية (تأكيد متعدد)"
+        elif total_score <= -2.0:
+            action = "SELL"
+            title = "إشارة بيع مؤسسية (تأكيد متعدد)"
+        else:
+            action = "WAIT"
+            title = "حالة ترقب (السوق غير واضح)"
 
-    # حساب المجموع الكلي المرجح
-    total_score = sum([s["score"] for s in strategies.values()])
-    confidence = min(95.0, max(65.0, round(50 + (abs(total_score) * 12), 1)))
+        # --- إدارة المخاطر وحساب حجم اللوت ---
+        entry = price
+        sl_distance = 1.5 * atr
+        if action == "BUY":
+            sl = entry - sl_distance
+            tp1 = entry + (2.0 * atr)
+            risk_amount = self.account_balance * self.risk_per_trade
+            position_size = risk_amount / sl_distance if sl_distance > 0 else 0
+        elif action == "SELL":
+            sl = entry + sl_distance
+            tp1 = entry - (2.0 * atr)
+            risk_amount = self.account_balance * self.risk_per_trade
+            position_size = risk_amount / sl_distance if sl_distance > 0 else 0
+        else:
+            sl, tp1, position_size = 0, 0, 0
 
-    if total_score >= 1.5:
-      action = "BUY"
-      title = "إشارة شراء مؤكدة ومدروسة"
-    elif total_score <= -1.5:
-      action = "SELL"
-      title = "إشارة بيع مؤكدة ومدروسة"
-    else:
-      action = "WAIT"
-      title = "حالة ترقب - السوق غير مستقر (لا تدخل الآن)"
+        # إعداد الشموع للشارت
+        candles = []
+        for idx, row in self.df.tail(120).iterrows():
+            candles.append({
+                "time": int(idx.timestamp()),
+                "open": float(row["Open"]), "high": float(row["High"]),
+                "low": float(row["Low"]), "close": float(row["Close"]),
+            })
 
-    # حساب المستويات
-    if action == "BUY":
-      entry = round(price, 2)
-      sl = round(price - (1.5 * atr), 2)
-      tp1 = round(price + (2.0 * atr), 2)
-    elif action == "SELL":
-      entry = round(price, 2)
-      sl = round(price + (1.5 * atr), 2)
-      tp1 = round(price - (2.0 * atr), 2)
-    else:
-      entry = round(price - (0.5 * atr), 2)
-      sl = round(entry - (1.5 * atr), 2)
-      tp1 = round(entry + (2.0 * atr), 2)
-
-    candles = []
-    for idx, row in self.df.tail(120).iterrows():
-      candles.append({
-          "time": int(idx.timestamp()),
-          "open": float(row["Open"]),
-          "high": float(row["High"]),
-          "low": float(row["Low"]),
-          "close": float(row["Close"]),
-      })
-
-    return {
-        "symbol": self.symbol,
-        "current_price": round(price, 2),
-        "action": action,
-        "title": title,
-        "confidence": confidence,
-        "levels": {"entry": entry, "sl": sl, "tp1": tp1},
-        "strategies": list(strategies.values()),
-        "candles": candles,
-    }
-
+        return {
+            "symbol": self.symbol,
+            "current_price": round(price, 2),
+            "action": action,
+            "title": title,
+            "position_size": round(position_size, 4) if action != "WAIT" else 0,
+            "levels": {"entry": round(entry, 2) if action != "WAIT" else 0, "sl": round(sl, 2) if action != "WAIT" else 0, "tp1": round(tp1, 2) if action != "WAIT" else 0},
+            "strategies": list(strategies.values()),
+            "candles": candles,
+        }
 
 @app.get("/", response_class=HTMLResponse)
 def home():
-  return """
+    return """
     <!DOCTYPE html>
     <html lang="ar" dir="rtl">
     <head>
         <meta charset="UTF-8">
-        <title>Ultimate Institutional AI Gateway</title>
+        <title>Institutional AI Engine v8</title>
         <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
         <style>
             * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -207,16 +189,13 @@ def home():
             .strat-item { font-size: 11px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #111; }
             .strat-title { color: #aaa; font-weight: bold; }
             .strat-desc { color: #666; margin-top: 2px; }
-            .track-btn { width: 100%; background: #2563eb; color: #fff; border: none; padding: 10px; border-radius: 4px; font-weight: bold; font-size: 13px; cursor: pointer; margin-top: 5px; }
-            .track-btn:hover { background: #1d4ed8; }
             .chart-wrap { flex: 1; background: #000000; position: relative; }
             #chart { width: 100%; height: 100%; }
-            .alert-box { background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #f87171; padding: 8px; border-radius: 4px; font-size: 11px; display: none; margin-top: 5px; text-align: center; }
         </style>
     </head>
     <body>
         <div class="header">
-            <div class="brand">REAL-TIME INSTITUTIONAL ENGINE</div>
+            <div class="brand">REAL-TIME INSTITUTIONAL ENGINE v8 (NO REPAINTING)</div>
             <div class="menu">
                 <button class="m-btn active" id="btn-GC=F" onclick="switchSymbol('GC=F')">GOLD</button>
                 <button class="m-btn" id="btn-CL=F" onclick="switchSymbol('CL=F')">OIL</button>
@@ -227,22 +206,20 @@ def home():
             <div class="panel">
                 <div class="box">
                     <div style="font-size:10px; color:#666; margin-bottom:4px;">حالة قرار الذكاء الاصطناعي</div>
-                    <div id="signal-badge" class="badge-wait">جاري الاتصال والتحليل...</div>
-                    <div style="font-size:11px; color:#888; margin-top:6px; text-align:center;">احتمال النجاح: <span id="conf-val" style="color:#fff;">0</span>%</div>
-                    <button class="track-btn" onclick="toggleTrackTrade()">تأكيد دخول الصفقة ومراقبتها</button>
-                    <div id="trade-alert" class="alert-box">تحذير: تغيرت معطيات السوق وعكس الذكاء الاصطناعي رأيه، يرجى إغلاق الصفقة!</div>
+                    <div id="signal-badge" class="badge-wait">جاري الاتصال...</div>
+                    <div style="font-size:11px; color:#888; margin-top:6px; text-align:center;">حجم المركز المقترح (Lots): <span id="lot-size" style="color:#38bdf8; font-weight:bold;">0.00</span></div>
                 </div>
 
                 <div class="box">
                     <div style="font-size:10px; color:#666; margin-bottom:6px;">مستويات التنفيذ</div>
                     <div class="row"><span class="lbl">السعر الحي</span><span id="p-live" class="val" style="color:#facc15;">0.00</span></div>
                     <div class="row"><span class="lbl">منطقة الدخول</span><span id="p-entry" class="val" style="color:#38bdf8;">0.00</span></div>
-                    <div class="row"><span class="lbl">وقف الخسارة (SL)</span><span id="p-sl" class="val" style="color:#f87171;">0.00</span></div>
-                    <div class="row"><span class="lbl">الهدف (TP)</span><span id="p-tp1" class="val" style="color:#4ade80;">0.00</span></div>
+                    <div class="row"><span class="lbl">وقف الخسارة</span><span id="p-sl" class="val" style="color:#f87171;">0.00</span></div>
+                    <div class="row"><span class="lbl">الهدف</span><span id="p-tp1" class="val" style="color:#4ade80;">0.00</span></div>
                 </div>
 
                 <div class="box" style="flex:1;">
-                    <div style="font-size:10px; color:#666; margin-bottom:6px;">التحليل التفصيلي للاستراتيجيات (واحدة بواحدة)</div>
+                    <div style="font-size:10px; color:#666; margin-bottom:6px;">التحليل التفصيلي (شمعة مغلقة)</div>
                     <div id="strategies-container"></div>
                 </div>
             </div>
@@ -253,9 +230,6 @@ def home():
         <script>
             let chart, series, activeLines = [];
             let ws = null;
-            let currentSymbol = 'GC=F';
-            let activeTrade = null;
-            let lastAction = null;
 
             function initChart() {
                 chart = LightweightCharts.createChart(document.getElementById('chart'), {
@@ -277,13 +251,12 @@ def home():
 
             function connectWS(symbol) {
                 if (ws) ws.close();
-                currentSymbol = symbol;
-                
                 let proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
                 ws = new WebSocket(proto + window.location.host + '/ws/' + symbol);
 
                 ws.onmessage = function(event) {
                     let data = JSON.parse(event.data);
+                    if(data.error) return;
                     
                     series.setData(data.candles);
                     clearLines();
@@ -294,19 +267,12 @@ def home():
                     else if(data.action === 'SELL') badge.className = 'badge-sell';
                     else badge.className = 'badge-wait';
 
-                    document.getElementById('conf-val').innerText = data.confidence;
+                    document.getElementById('lot-size').innerText = data.position_size;
                     document.getElementById('p-live').innerText = data.current_price;
                     document.getElementById('p-entry').innerText = data.levels.entry;
                     document.getElementById('p-sl').innerText = data.levels.sl;
                     document.getElementById('p-tp1').innerText = data.levels.tp1;
 
-                    // مراقبة وتتبع الصفقة في حال غيّر الذكاء الاصطناعي رأيه
-                    if (activeTrade && lastAction && lastAction !== data.action) {
-                        document.getElementById('trade-alert').style.display = 'block';
-                    }
-                    lastAction = data.action;
-
-                    // عرض تفاصيل كل الاستراتيجيات واحدة بواحدة
                     let stratHtml = '';
                     data.strategies.forEach(s => {
                         let color = s.score > 0 ? '#4ade80' : (s.score < 0 ? '#f87171' : '#facc15');
@@ -319,27 +285,18 @@ def home():
                     });
                     document.getElementById('strategies-container').innerHTML = stratHtml;
 
-                    // رسم الخطوط على الشارت
-                    let themeColor = data.action === 'BUY' ? '#38bdf8' : (data.action === 'SELL' ? '#f87171' : '#eab308');
-                    
-                    activeLines.push(series.createPriceLine({ price: data.current_price, color: '#facc15', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, title: 'LIVE PRICE' }));
-                    activeLines.push(series.createPriceLine({ price: data.levels.entry, color: themeColor, lineWidth: 2, title: 'ENTRY' }));
-                    activeLines.push(series.createPriceLine({ price: data.levels.sl, color: '#ef4444', lineWidth: 2, title: 'STOP LOSS' }));
-                    activeLines.push(series.createPriceLine({ price: data.levels.tp1, color: '#22c55e', lineWidth: 2, title: 'TARGET' }));
+                    if (data.action !== 'WAIT') {
+                        activeLines.push(series.createPriceLine({ price: data.levels.entry, color: '#38bdf8', lineWidth: 2, title: 'ENTRY' }));
+                        activeLines.push(series.createPriceLine({ price: data.levels.sl, color: '#ef4444', lineWidth: 2, title: 'SL' }));
+                        activeLines.push(series.createPriceLine({ price: data.levels.tp1, color: '#22c55e', lineWidth: 2, title: 'TP' }));
+                    }
                 };
             }
 
             function switchSymbol(symbol) {
                 document.querySelectorAll('.m-btn').forEach(b => b.classList.remove('active'));
                 document.getElementById('btn-' + symbol).classList.add('active');
-                activeTrade = null;
-                document.getElementById('trade-alert').style.display = 'none';
                 connectWS(symbol);
-            }
-
-            function toggleTrackTrade() {
-                activeTrade = true;
-                alert("تم تفعيل نظام تتبع الصفقة بنجاح. سيقوم الذكاء الاصطناعي بمراقبتها وتنبيهك فوراً في حال انعكاس الاتجاه.");
             }
 
             window.onload = () => {
@@ -351,18 +308,19 @@ def home():
     </html>
     """
 
-
 @app.websocket("/ws/{symbol}")
 async def websocket_endpoint(websocket: WebSocket, symbol: str):
-  await websocket.accept()
-  engine = AdvancedInstitutionalEngine(
-      symbol=symbol, period="180d", interval="1h"
-  )
-  try:
-    while True:
-      # بث التحديثات الحية الفورية كل ثانية (تحديث الشموع والتحليل فائق السرعة)
-      data = engine.analyze_market()
-      await websocket.send_text(json.dumps(data))
-      await asyncio.sleep(1)
-  except WebSocketDisconnect:
-    pass
+    await websocket.accept()
+    # تم تمرير رصيد 20 دولار كمثال
+    engine = AdvancedInstitutionalEngine(symbol=symbol, period="180d", interval="1h", account_balance=20.0)
+    try:
+        while True:
+            data = engine.analyze_market()
+            if "error" in data:
+                await websocket.send_text(json.dumps(data))
+            else:
+                await websocket.send_text(json.dumps(data))
+            # تحديث كل 5 ثواني بدلاً من ثانية لتخفيف الضغط على yfinance وتجنب الحظر
+            await asyncio.sleep(5)
+    except WebSocketDisconnect:
+        pass
