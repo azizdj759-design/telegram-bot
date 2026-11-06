@@ -6,29 +6,32 @@ import json
 import math
 from datetime import datetime, timedelta
 
-app = FastAPI(title="Pro Signal Engine - Safe Mode", version="26.0")
+app = FastAPI(title="Pro Signal Engine - Multi-Timeframe", version="27.0")
 
-# مخزن مؤقت للحفاظ على حالة المحاكاة لكل عملة
 engines = {}
 
 class MarketSimulator:
-    def __init__(self, symbol, balance=30.0, risk_usd=3.0):
+    def __init__(self, symbol, balance=30.0, risk_usd=5.0):
         self.symbol = symbol
         self.balance = balance
-        self.risk_usd = risk_usd
+        self.risk_usd = risk_usd # تم رفع الخسارة إلى 5$
         
+        # إعدادات الأصول الجديدة
         if symbol == "BTCUSDT":
             self.base_price = 65000.0
             self.volatility = 150.0
         elif symbol == "XAUUSD":
             self.base_price = 2350.0
             self.volatility = 4.0
-        else:
+        elif symbol == "EURUSD":
+            self.base_price = 1.0850
+            self.volatility = 0.0015
+        else: # WTIUSD (Oil)
             self.base_price = 78.0
             self.volatility = 0.8
 
         self.current_price = self.base_price
-        self.df = self._generate_historical_data(300)
+        self.df_15m = self._generate_historical_data(1000) # توليد بيانات أكثر لتغطية فريم الساعة
 
     def _generate_historical_data(self, length):
         dates = [datetime.now() - timedelta(minutes=15*i) for i in range(length)]
@@ -50,13 +53,12 @@ class MarketSimulator:
     def update_live_tick(self):
         change = np.random.normal(0, self.volatility * 0.2)
         self.current_price += change
-        self.df.iloc[-1, self.df.columns.get_loc('Close')] = self.current_price
-        self.df.iloc[-1, self.df.columns.get_loc('High')] = max(self.df.iloc[-1]['High'], self.current_price)
-        self.df.iloc[-1, self.df.columns.get_loc('Low')] = min(self.df.iloc[-1]['Low'], self.current_price)
+        self.df_15m.iloc[-1, self.df_15m.columns.get_loc('Close')] = self.current_price
+        self.df_15m.iloc[-1, self.df_15m.columns.get_loc('High')] = max(self.df_15m.iloc[-1]['High'], self.current_price)
+        self.df_15m.iloc[-1, self.df_15m.columns.get_loc('Low')] = min(self.df_15m.iloc[-1]['Low'], self.current_price)
 
-    def analyze(self):
-        df = self.df.copy()
-        
+    def _add_indicators(self, df):
+        df = df.copy()
         df["EMA_21"] = df["Close"].ewm(span=21, adjust=False).mean()
         df["EMA_50"] = df["Close"].ewm(span=50, adjust=False).mean()
         df["EMA_200"] = df["Close"].ewm(span=200, adjust=False).mean()
@@ -73,60 +75,85 @@ class MarketSimulator:
 
         df["Swing_High"] = df["High"] == df["High"].rolling(5).max()
         df["Swing_Low"] = df["Low"] == df["Low"].rolling(5).min()
-        last_swing_high = df[df["Swing_High"]]["High"].iloc[-1] if not df[df["Swing_High"]].empty else 0
-        last_swing_low = df[df["Swing_Low"]]["Low"].iloc[-1] if not df[df["Swing_Low"]].empty else 0
+        return df
 
-        df["FVG_Bull"] = df["Low"] > df["High"].shift(2)
-        df["FVG_Bear"] = df["High"] < df["Low"].shift(2)
-        df["OB_Bull"] = (df["Close"].shift(1) < df["Open"].shift(1)) & (df["Close"] > df["High"].shift(1))
-        df["OB_Bear"] = (df["Close"].shift(1) > df["Open"].shift(1)) & (df["Close"] < df["Low"].shift(1))
+    def analyze(self):
+        # 1. إعداد الفريمات
+        df_15m = self._add_indicators(self.df_15m)
+        
+        # تحويل البيانات إلى فريم الساعة (60 دقيقة = 4 شموع من 15 دقيقة)
+        df_1h = self.df_15m.resample('1h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
+        df_1h = self._add_indicators(df_1h)
 
-        last = df.iloc[-2]
-        price = df.iloc[-1]["Close"]
+        # 2. تحليل الاتجاه العام (فريم الساعة)
+        htf_last = df_1h.iloc[-2]
+        htf_trend = "BULLISH" if htf_last["EMA_50"] > htf_last["EMA_200"] and htf_last["Close"] > htf_last["EMA_50"] else "BEARISH"
+
+        # 3. تحليل فريم الدخول (15 دقيقة)
+        last = df_15m.iloc[-2]
+        price = df_15m.iloc[-1]["Close"]
         atr = last["ATR"] if not pd.isna(last["ATR"]) else self.volatility
 
-        # دالة مساعدة لتنظيف الأرقام من NaN
-        def clean(v):
-            if pd.isna(v) or math.isinf(v): return 0.0
-            return round(float(v), 2)
+        last_swing_high = df_15m[df_15m["Swing_High"]]["High"].iloc[-1] if not df_15m[df_15m["Swing_High"]].empty else 0
+        last_swing_low = df_15m[df_15m["Swing_Low"]]["Low"].iloc[-1] if not df_15m[df_15m["Swing_Low"]].empty else 0
+
+        fvg_bull = df_15m["Low"] > df_15m["High"].shift(2)
+        fvg_bear = df_15m["High"] < df_15m["Low"].shift(2)
 
         strategies = {}
+        total_score = 0
+
+        # --- تقييم SMC (كسر الهيكل BOS) ---
         if price > last_swing_high:
             strategies["SMC"] = {"name": "SMC (كسر هيكل صاعد)", "status": "اختراق قمة سابقة (BOS)", "score": 2.0}
+            total_score += 2.0
         elif price < last_swing_low:
             strategies["SMC"] = {"name": "SMC (كسر هيكل هابط)", "status": "اختراق قاع سابق (BOS)", "score": -2.0}
+            total_score -= 2.0
         else:
             strategies["SMC"] = {"name": "SMC", "status": "داخل نطاق السيولة", "score": 0}
 
-        if last["FVG_Bull"] or last["OB_Bull"]:
-            strategies["ICT"] = {"name": "ICT (فجوة/بلوك)", "status": "فجوة أو بلوك أوامر شرائي", "score": 1.5}
-        elif last["FVG_Bear"] or last["OB_Bear"]:
-            strategies["ICT"] = {"name": "ICT (فجوة/بلوك)", "status": "فجوة أو بلوك أوامر بيعي", "score": -1.5}
+        # --- تقييم ICT (الفجوات) ---
+        if fvg_bull.iloc[-2]:
+            strategies["ICT"] = {"name": "ICT (فجوة صاعدة)", "status": "فجوة سعرية FVG صاعدة", "score": 1.5}
+            total_score += 1.5
+        elif fvg_bear.iloc[-2]:
+            strategies["ICT"] = {"name": "ICT (فجوة هابطة)", "status": "فجوة سعرية FVG هابطة", "score": -1.5}
+            total_score -= 1.5
         else:
             strategies["ICT"] = {"name": "ICT", "status": "لا توجد فجوات نشطة", "score": 0}
 
-        if last["EMA_21"] > last["EMA_200"] and price > last["EMA_50"]:
-            strategies["Elliott"] = {"name": "إليوت", "status": "موجة دافعة صاعدة (3/5)", "score": 1.0}
-        elif last["EMA_21"] < last["EMA_200"] and price < last["EMA_50"]:
-            strategies["Elliott"] = {"name": "إليوت", "status": "موجة دافعة هابطة (3/5)", "score": -1.0}
+        # --- تقييم إليوت (بناء على فريم الساعة) ---
+        if htf_trend == "BULLISH":
+            strategies["Elliott"] = {"name": "إليوت (1H)", "status": "موجة دافعة صاعدة", "score": 1.0}
+            total_score += 1.0
         else:
-            strategies["Elliott"] = {"name": "إليوت", "status": "موجة تصحيحية", "score": 0}
+            strategies["Elliott"] = {"name": "إليوت (1H)", "status": "موجة دافعة هابطة", "score": -1.0}
+            total_score -= 1.0
 
-        if last["RSI"] < 35:
-            strategies["Technical"] = {"name": "الفني (RSI)", "status": f"تشبع بيعي ({last['RSI']:.1f})", "score": 1.0}
-        elif last["RSI"] > 65:
-            strategies["Technical"] = {"name": "الفني (RSI)", "status": f"تشبع شرائي ({last['RSI']:.1f})", "score": -1.0}
+        # --- التقييم الفني (15 دقيقة) ---
+        if last["RSI"] < 40:
+            strategies["Technical"] = {"name": "الفني", "status": f"تشبع بيعي ({last['RSI']:.1f})", "score": 1.0}
+            total_score += 1.0
+        elif last["RSI"] > 60:
+            strategies["Technical"] = {"name": "الفني", "status": f"تشبع شرائي ({last['RSI']:.1f})", "score": -1.0}
+            total_score -= 1.0
         else:
-            strategies["Technical"] = {"name": "الفني (RSI)", "status": f"محايد ({last['RSI']:.1f})", "score": 0}
+            strategies["Technical"] = {"name": "الفني", "status": f"محايد ({last['RSI']:.1f})", "score": 0}
 
-        total_score = sum(s["score"] for s in strategies.values())
+        # 4. القرار الصارم (يجب أن يتوافق مع الاتجاه العام)
         action = "WAIT"
-        if total_score >= 4.0: action = "BUY"
-        elif total_score <= -4.0: action = "SELL"
+        if htf_trend == "BULLISH" and total_score >= 3.0:
+            action = "BUY"
+        elif htf_trend == "BEARISH" and total_score <= -3.0:
+            action = "SELL"
 
+        # 5. إدارة المخاطر (خسارة 5$)
         sl_dist = 1.5 * atr
         position_size, entry, sl, tp, warning_msg = 0, 0, 0, 0, ""
         
+        def clean(v): return 0.0 if pd.isna(v) or math.isinf(v) else round(float(v), 5 if self.symbol == "EURUSD" else 2)
+
         if action != "WAIT" and sl_dist > 0:
             entry = clean(price)
             sl = clean(entry - sl_dist if action == "BUY" else entry + sl_dist)
@@ -135,17 +162,16 @@ class MarketSimulator:
             if position_size < 0.0001:
                 warning_msg = "⚠️ حجم اللوت صغير جداً!"
 
-        candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df.tail(100).iterrows()]
+        candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df_15m.tail(100).iterrows()]
 
         return {
-            "status": "ok", "current_price": clean(price), "action": action,
+            "status": "ok", "current_price": clean(price), "action": action, "htf_trend": htf_trend,
             "levels": {"entry": entry, "sl": sl, "tp": tp},
             "position_size": position_size, "warning": warning_msg, 
             "strategies": list(strategies.values()), "candles": candles,
-            "source": "Simulation (Safe HTTP Mode)"
+            "source": "MTF Simulator (Safe)"
         }
 
-# مسار API يعيد البيانات كـ JSON مباشر
 @app.get("/api/data/{symbol}")
 def get_data(symbol: str):
     if symbol not in engines:
@@ -162,40 +188,43 @@ def home():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Pro Signal Engine</title>
+        <title>Pro Signal Engine - MTF</title>
         <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
         <style>
             * { box-sizing: border-box; margin: 0; padding: 0; }
             body { font-family: system-ui, sans-serif; background-color: #000; color: #fff; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
-            .header { height: 50px; background: #050505; border-bottom: 1px solid #141414; display: flex; align-items: center; justify-content: space-between; padding: 0 15px; }
-            .header .brand { font-size: 13px; font-weight: bold; }
+            .header { height: 50px; background: #050505; border-bottom: 1px solid #141414; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; overflow-x: auto; white-space: nowrap; }
+            .header .brand { font-size: 13px; font-weight: bold; margin-left: 10px; }
             .header .menu { display: flex; gap: 6px; }
             .m-btn { background: #222; color: #fff; border: 1px solid #444; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
-            .m-btn.active { background: #444; font-weight: bold; }
+            .m-btn.active { background: #444; font-weight: bold; border-color: #888; }
             .layout { display: flex; flex: 1; overflow: hidden; }
             .panel { width: 320px; background: #030303; border-left: 1px solid #121212; padding: 12px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
             .box { background: #080808; border: 1px solid #161616; padding: 10px; border-radius: 5px; }
-            .badge-buy { background: rgba(34, 197, 94, 0.1); color: #22c55e; border: 1px solid #22c55e; padding: 8px; border-radius: 4px; text-align: center; font-weight: bold; font-size: 14px; }
-            .badge-sell { background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid #ef4444; padding: 8px; border-radius: 4px; text-align: center; font-weight: bold; font-size: 14px; }
-            .badge-wait { background: rgba(234, 179, 8, 0.1); color: #eab308; border: 1px solid #eab308; padding: 8px; border-radius: 4px; text-align: center; font-weight: bold; font-size: 14px; }
+            .badge-buy { background: rgba(34, 197, 94, 0.1); color: #22c55e; border: 1px solid #22c55e; padding: 8px; border-radius: 4px; text-align: center; font-weight: bold; font-size: 15px; }
+            .badge-sell { background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid #ef4444; padding: 8px; border-radius: 4px; text-align: center; font-weight: bold; font-size: 15px; }
+            .badge-wait { background: rgba(234, 179, 8, 0.1); color: #eab308; border: 1px solid #eab308; padding: 8px; border-radius: 4px; text-align: center; font-weight: bold; font-size: 15px; }
             .row { display: flex; justify-content: space-between; font-size: 12px; margin-top: 6px; padding-bottom: 3px; border-bottom: 1px solid #111; }
             .val { font-family: monospace; font-weight: bold; }
             .strat-item { font-size: 11px; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid #111; }
+            .trend-bull { color: #22c55e; font-weight: bold; }
+            .trend-bear { color: #ef4444; font-weight: bold; }
             .warning-box { background: rgba(239, 68, 68, 0.2); border: 1px solid #ef4444; color: #fca5a5; padding: 6px; border-radius: 4px; font-size: 10px; text-align: center; display: none; margin-top: 4px; }
             .source-tag { font-size: 9px; color: #666; text-align: center; margin-top: 4px; }
             .chart-wrap { flex: 1; background: #000; position: relative; }
             #chart { width: 100%; height: 100%; }
             @media (max-width: 768px) {
                 .layout { flex-direction: column; }
-                .panel { width: 100%; border-left: none; border-bottom: 1px solid #121212; height: 50%; }
-                .chart-wrap { height: 50%; }
+                .panel { width: 100%; border-left: none; border-bottom: 1px solid #121212; height: 55%; }
+                .chart-wrap { height: 45%; }
             }
         </style>
     </head>
     <body>
         <div class="header">
-            <div class="brand">SIMULATOR (Loss: $3)</div>
+            <div class="brand">PRO MTF ($5 Risk)</div>
             <div class="menu">
+                <button class="m-btn" id="btn-EURUSD" onclick="switchSymbol('EURUSD')">EUR/USD</button>
                 <button class="m-btn" id="btn-XAUUSD" onclick="switchSymbol('XAUUSD')">GOLD</button>
                 <button class="m-btn" id="btn-WTIUSD" onclick="switchSymbol('WTIUSD')">OIL</button>
                 <button class="m-btn active" id="btn-BTCUSDT" onclick="switchSymbol('BTCUSDT')">BITCOIN</button>
@@ -204,11 +233,17 @@ def home():
         <div class="layout">
             <div class="panel">
                 <div class="box" style="text-align:center;">
-                    <div style="font-size:10px; color:#888; margin-bottom:4px;">إشارة التداول</div>
-                    <div id="signal-badge" class="badge-wait">جاري الاتصال...</div>
-                    <div style="margin-top:8px; font-size:11px; color:#aaa;">
-                        حجم المركز: <strong id="pos-size" style="color:#38bdf8; font-size:14px;">0.00</strong><br>
-                        <span style="font-size:9px;">(خسارة قصوى: $3.00)</span>
+                    <div style="font-size:10px; color:#888; margin-bottom:4px;">إشارة التداول (15 دقيقة)</div>
+                    <div id="signal-badge" class="badge-wait">جاري التحميل...</div>
+                    
+                    <div style="margin-top:8px; font-size:11px; color:#aaa; display:flex; justify-content:center; gap:10px;">
+                        <div>الاتجاه (1H): <span id="htf-trend">-</span></div>
+                        <div>|</div>
+                        <div>الخسارة: <span style="color:#38bdf8;">$5.00</span></div>
+                    </div>
+                    
+                    <div style="margin-top:6px; font-size:12px; color:#aaa;">
+                        حجم المركز: <strong id="pos-size" style="color:#38bdf8; font-size:14px;">0.00</strong>
                     </div>
                     <div id="warn-box" class="warning-box"></div>
                     <div id="source-tag" class="source-tag"></div>
@@ -252,9 +287,13 @@ def home():
                         clearLines();
                         
                         const badge = document.getElementById('signal-badge');
-                        badge.innerText = data.action === 'BUY' ? 'شراء قوي' : data.action === 'SELL' ? 'بيع قوي' : 'ترقب';
+                        badge.innerText = data.action === 'BUY' ? 'STRONG BUY' : data.action === 'SELL' ? 'STRONG SELL' : 'WAIT';
                         badge.className = data.action === 'BUY' ? 'badge-buy' : data.action === 'SELL' ? 'badge-sell' : 'badge-wait';
                         
+                        const trendEl = document.getElementById('htf-trend');
+                        trendEl.innerText = data.htf_trend === 'BULLISH' ? 'صاعد' : 'هابط';
+                        trendEl.className = data.htf_trend === 'BULLISH' ? 'trend-bull' : 'trend-bear';
+
                         document.getElementById('pos-size').innerText = data.position_size;
                         document.getElementById('p-live').innerText = data.current_price;
                         document.getElementById('p-entry').innerText = data.levels.entry;
@@ -279,22 +318,18 @@ def home():
                             activeLines.push(series.createPriceLine({ price: data.levels.tp, color: '#22c55e', lineWidth: 2, title: 'TP' }));
                         }
                     })
-                    .catch(err => {
-                        console.error("Fetch error:", err);
-                        document.getElementById('signal-badge').innerText = "خطأ في الاتصال";
-                    });
+                    .catch(err => console.error(err));
             }
 
             function switchSymbol(symbol) {
                 currentSymbol = symbol;
                 document.querySelectorAll('.m-btn').forEach(b => b.classList.remove('active'));
                 document.getElementById('btn-' + symbol).classList.add('active');
-                
                 document.getElementById('signal-badge').innerText = "جاري التحميل...";
                 
                 if (intervalId) clearInterval(intervalId);
                 fetchData();
-                intervalId = setInterval(fetchData, 2000); // طلب التحديث كل ثانيتين
+                intervalId = setInterval(fetchData, 2000); 
             }
 
             window.onload = () => { initChart(); switchSymbol('BTCUSDT'); };
