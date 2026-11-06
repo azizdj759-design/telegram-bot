@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 import numpy as np
 import pandas as pd
 import math
@@ -7,35 +7,48 @@ import httpx
 import asyncio
 from datetime import datetime, timedelta
 
-app = FastAPI(title="Pro Signal Engine - Exness & Telegram", version="28.0")
+app = FastAPI(title="Pro Signal Engine - Exness & Telegram", version="29.0")
 
 # إعدادات التلغرام
 TELEGRAM_TOKEN = "8741070555:AAGf6ys8UH8TZwlQpy_vWff9YONZ9BDmOok"
-TELEGRAM_CHAT_ID = None # سيتم جلبه تلقائياً
+TELEGRAM_CHAT_ID = None 
 
 async def get_chat_id():
     global TELEGRAM_CHAT_ID
-    if TELEGRAM_CHAT_ID: return
+    if TELEGRAM_CHAT_ID: return True
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
         async with httpx.AsyncClient() as client:
             res = await client.get(url)
             data = res.json()
             if data.get("ok") and data.get("result"):
-                # أخذ آخر رسالة تم إرسالها للبوت
                 TELEGRAM_CHAT_ID = data["result"][-1]["message"]["chat"]["id"]
-                print(f"✅ تم ربط التلغرام بنجاح! Chat ID: {TELEGRAM_CHAT_ID}")
+                print(f"✅ Chat ID: {TELEGRAM_CHAT_ID}")
+                return True
     except Exception as e:
         print(f"Telegram Error: {e}")
+    return False
 
 async def send_telegram_message(message: str):
+    global TELEGRAM_CHAT_ID
     if not TELEGRAM_CHAT_ID:
         await get_chat_id()
-    if not TELEGRAM_CHAT_ID: return
+    if not TELEGRAM_CHAT_ID: 
+        return False
     
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     async with httpx.AsyncClient() as client:
-        await client.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"})
+        res = await client.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"})
+        return res.status_code == 200
+
+# مسار مخصص لاختبار التلغرام
+@app.get("/test-telegram")
+async def test_telegram():
+    success = await send_telegram_message("🚀 <b>اختبار ناجح!</b>\n\nالموقع متصل ببوت التلغرام بنجاح. ستصلك الإشارات هنا.")
+    if success:
+        return {"status": "success", "message": "تم إرسال الرسالة إلى تلغرام بنجاح!"}
+    else:
+        return {"status": "error", "message": "فشل الإرسال. تأكد من أنك أرسلت رسالة 'Start' إلى البوت أولاً."}
 
 engines = {}
 
@@ -44,10 +57,9 @@ class MarketSimulator:
         self.symbol = symbol
         self.risk_usd = risk_usd
         self.tick_count = 0
-        self.active_trade = None # لتتبع الصفقات المفتوحة
+        self.active_trade = None
         self.last_action = "WAIT"
         
-        # إعدادات الأصول (محاكاة Exness)
         if symbol == "BTCUSDT":
             self.base_price, self.volatility, self.decimals = 65000.0, 150.0, 2
         elif symbol == "ETHUSDT":
@@ -60,11 +72,11 @@ class MarketSimulator:
             self.base_price, self.volatility, self.decimals = 1.27000, 0.0018, 5
         elif symbol == "USDJPY":
             self.base_price, self.volatility, self.decimals = 155.000, 0.25, 3
-        else: # WTIUSD (Oil)
+        else:
             self.base_price, self.volatility, self.decimals = 78.0, 0.8, 2
 
         self.current_price = self.base_price
-        self.df_15m = self._generate_historical_data(1000)
+        self.df_15m = self._generate_historical_data(1500) # بيانات أكثر لدعم 1000 شمعة
 
     def _generate_historical_data(self, length):
         dates = [datetime.now() - timedelta(minutes=15*i) for i in range(length)]
@@ -91,7 +103,6 @@ class MarketSimulator:
         self.df_15m.iloc[-1, self.df_15m.columns.get_loc('High')] = max(self.df_15m.iloc[-1]['High'], self.current_price)
         self.df_15m.iloc[-1, self.df_15m.columns.get_loc('Low')] = min(self.df_15m.iloc[-1]['Low'], self.current_price)
         
-        # إنشاء شمعة جديدة كل 10 تحديثات (20 ثانية)
         if self.tick_count >= 10:
             self.tick_count = 0
             new_time = self.df_15m.index[-1] + timedelta(minutes=15)
@@ -100,7 +111,7 @@ class MarketSimulator:
                 'Low': [self.current_price], 'Close': [self.current_price],
                 'Volume': [np.random.uniform(1000, 5000)]
             }, index=[new_time])
-            self.df_15m = pd.concat([self.df_15m, new_row]).tail(1000)
+            self.df_15m = pd.concat([self.df_15m, new_row]).tail(1500)
 
     def _add_indicators(self, df):
         df = df.copy()
@@ -192,9 +203,8 @@ class MarketSimulator:
             if position_size < 0.0001:
                 warning_msg = "⚠️ حجم اللوت صغير جداً!"
 
-        # --- نظام إشعارات التلغرام ومراقبة الصفقات ---
+        # إشعارات التلغرام ومراقبة الصفقات
         if action != "WAIT" and action != self.last_action:
-            # إشارة جديدة
             self.active_trade = {"action": action, "entry": entry, "sl": sl, "tp": tp}
             msg = f"🚀 <b>إشارة جديدة: {self.symbol}</b>\n\n"
             msg += f"الاتجاه: {action}\n"
@@ -207,7 +217,6 @@ class MarketSimulator:
 
         self.last_action = action
 
-        # مراقبة الصفقة الحالية (هل ضربت الهدف أو الخسارة؟)
         if self.active_trade:
             t = self.active_trade
             if t["action"] == "BUY":
@@ -225,8 +234,8 @@ class MarketSimulator:
                     asyncio.create_task(send_telegram_message(f"❌ <b>تم ضرب وقف الخسارة ({self.symbol})</b>\nخسارة: -$5.00"))
                     self.active_trade = None
 
-        # إرسال 500 شمعة ليتحلل الشارت بشكل أفضل
-        candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df_15m.tail(500).iterrows()]
+        # إرسال 1000 شمعة للشارت
+        candles = [{"time": int(idx.timestamp()), "open": clean(row["Open"]), "high": clean(row["High"]), "low": clean(row["Low"]), "close": clean(row["Close"])} for idx, row in df_15m.tail(1000).iterrows()]
 
         return {
             "status": "ok", "current_price": clean(price), "action": action, "htf_trend": htf_trend,
@@ -255,13 +264,14 @@ def home():
     <html lang="ar" dir="rtl">
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
         <title>Pro Signal Engine - Exness</title>
         <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
         <style>
             * { box-sizing: border-box; margin: 0; padding: 0; }
-            body { font-family: system-ui, sans-serif; background-color: #000; color: #fff; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
-            .header { height: 50px; background: #050505; border-bottom: 1px solid #141414; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; overflow-x: auto; white-space: nowrap; }
+            /* استخدام 100dvh لضمان ملء شاشة الهاتف بالكامل */
+            body { font-family: system-ui, sans-serif; background-color: #000; color: #fff; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
+            .header { height: 50px; flex-shrink: 0; background: #050505; border-bottom: 1px solid #141414; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; overflow-x: auto; white-space: nowrap; }
             .header .brand { font-size: 13px; font-weight: bold; margin-left: 10px; }
             .header .menu { display: flex; gap: 6px; }
             .m-btn { background: #222; color: #fff; border: 1px solid #444; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
@@ -282,11 +292,11 @@ def home():
             .chart-wrap { flex: 1; background: #000; position: relative; }
             #chart { width: 100%; height: 100%; }
             
-            /* تعديلات الهاتف: تكبير الشارت لـ 65% */
+            /* تكبير الشارت إلى 75% وتقليص اللوحة إلى 25% */
             @media (max-width: 768px) {
                 .layout { flex-direction: column; }
-                .panel { width: 100%; border-left: none; border-bottom: 1px solid #121212; height: 35%; } 
-                .chart-wrap { height: 65%; } 
+                .panel { width: 100%; border-left: none; border-bottom: 1px solid #121212; height: 25%; } 
+                .chart-wrap { height: 75%; } 
             }
         </style>
     </head>
