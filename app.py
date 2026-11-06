@@ -2,7 +2,6 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 import numpy as np
 import pandas as pd
-import json
 import math
 from datetime import datetime, timedelta
 
@@ -14,9 +13,8 @@ class MarketSimulator:
     def __init__(self, symbol, balance=30.0, risk_usd=5.0):
         self.symbol = symbol
         self.balance = balance
-        self.risk_usd = risk_usd # تم رفع الخسارة إلى 5$
+        self.risk_usd = risk_usd # الخسارة 5$
         
-        # إعدادات الأصول الجديدة
         if symbol == "BTCUSDT":
             self.base_price = 65000.0
             self.volatility = 150.0
@@ -31,7 +29,7 @@ class MarketSimulator:
             self.volatility = 0.8
 
         self.current_price = self.base_price
-        self.df_15m = self._generate_historical_data(1000) # توليد بيانات أكثر لتغطية فريم الساعة
+        self.df_15m = self._generate_historical_data(1000)
 
     def _generate_historical_data(self, length):
         dates = [datetime.now() - timedelta(minutes=15*i) for i in range(length)]
@@ -78,18 +76,15 @@ class MarketSimulator:
         return df
 
     def analyze(self):
-        # 1. إعداد الفريمات
         df_15m = self._add_indicators(self.df_15m)
         
-        # تحويل البيانات إلى فريم الساعة (60 دقيقة = 4 شموع من 15 دقيقة)
+        # تحويل إلى فريم الساعة
         df_1h = self.df_15m.resample('1h').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
         df_1h = self._add_indicators(df_1h)
 
-        # 2. تحليل الاتجاه العام (فريم الساعة)
         htf_last = df_1h.iloc[-2]
         htf_trend = "BULLISH" if htf_last["EMA_50"] > htf_last["EMA_200"] and htf_last["Close"] > htf_last["EMA_50"] else "BEARISH"
 
-        # 3. تحليل فريم الدخول (15 دقيقة)
         last = df_15m.iloc[-2]
         price = df_15m.iloc[-1]["Close"]
         atr = last["ATR"] if not pd.isna(last["ATR"]) else self.volatility
@@ -103,35 +98,35 @@ class MarketSimulator:
         strategies = {}
         total_score = 0
 
-        # --- تقييم SMC (كسر الهيكل BOS) ---
+        # SMC
         if price > last_swing_high:
-            strategies["SMC"] = {"name": "SMC (كسر هيكل صاعد)", "status": "اختراق قمة سابقة (BOS)", "score": 2.0}
+            strategies["SMC"] = {"name": "SMC (كسر هيكل صاعد)", "status": "BOS صاعد", "score": 2.0}
             total_score += 2.0
         elif price < last_swing_low:
-            strategies["SMC"] = {"name": "SMC (كسر هيكل هابط)", "status": "اختراق قاع سابق (BOS)", "score": -2.0}
+            strategies["SMC"] = {"name": "SMC (كسر هيكل هابط)", "status": "BOS هابط", "score": -2.0}
             total_score -= 2.0
         else:
             strategies["SMC"] = {"name": "SMC", "status": "داخل نطاق السيولة", "score": 0}
 
-        # --- تقييم ICT (الفجوات) ---
+        # ICT
         if fvg_bull.iloc[-2]:
-            strategies["ICT"] = {"name": "ICT (فجوة صاعدة)", "status": "فجوة سعرية FVG صاعدة", "score": 1.5}
+            strategies["ICT"] = {"name": "ICT (فجوة صاعدة)", "status": "FVG صاعدة", "score": 1.5}
             total_score += 1.5
         elif fvg_bear.iloc[-2]:
-            strategies["ICT"] = {"name": "ICT (فجوة هابطة)", "status": "فجوة سعرية FVG هابطة", "score": -1.5}
+            strategies["ICT"] = {"name": "ICT (فجوة هابطة)", "status": "FVG هابطة", "score": -1.5}
             total_score -= 1.5
         else:
             strategies["ICT"] = {"name": "ICT", "status": "لا توجد فجوات نشطة", "score": 0}
 
-        # --- تقييم إليوت (بناء على فريم الساعة) ---
+        # Elliott (MTF)
         if htf_trend == "BULLISH":
-            strategies["Elliott"] = {"name": "إليوت (1H)", "status": "موجة دافعة صاعدة", "score": 1.0}
+            strategies["Elliott"] = {"name": "إليوت (1H)", "status": "موجة صاعدة", "score": 1.0}
             total_score += 1.0
         else:
-            strategies["Elliott"] = {"name": "إليوت (1H)", "status": "موجة دافعة هابطة", "score": -1.0}
+            strategies["Elliott"] = {"name": "إليوت (1H)", "status": "موجة هابطة", "score": -1.0}
             total_score -= 1.0
 
-        # --- التقييم الفني (15 دقيقة) ---
+        # Technical
         if last["RSI"] < 40:
             strategies["Technical"] = {"name": "الفني", "status": f"تشبع بيعي ({last['RSI']:.1f})", "score": 1.0}
             total_score += 1.0
@@ -141,14 +136,14 @@ class MarketSimulator:
         else:
             strategies["Technical"] = {"name": "الفني", "status": f"محايد ({last['RSI']:.1f})", "score": 0}
 
-        # 4. القرار الصارم (يجب أن يتوافق مع الاتجاه العام)
+        # القرار الصارم
         action = "WAIT"
         if htf_trend == "BULLISH" and total_score >= 3.0:
             action = "BUY"
         elif htf_trend == "BEARISH" and total_score <= -3.0:
             action = "SELL"
 
-        # 5. إدارة المخاطر (خسارة 5$)
+        # إدارة المخاطر (خسارة 5$)
         sl_dist = 1.5 * atr
         position_size, entry, sl, tp, warning_msg = 0, 0, 0, 0, ""
         
@@ -171,6 +166,10 @@ class MarketSimulator:
             "strategies": list(strategies.values()), "candles": candles,
             "source": "MTF Simulator (Safe)"
         }
+
+@app.get("/health")
+def health_check():
+    return {"status": "alive"}
 
 @app.get("/api/data/{symbol}")
 def get_data(symbol: str):
