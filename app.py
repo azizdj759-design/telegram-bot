@@ -69,7 +69,8 @@ POLL_SECONDS = _i("POLL_SECONDS", 30)
 FETCH_INTERVAL = _i("FETCH_INTERVAL", 60)
 MIN_BARS = 150
 BAR_MINUTES = 15
-MIN_SCORE = _f("MIN_SCORE", 1.6)             # أقل مجموع نقاط للإشارة
+MIN_SCORE = _f("MIN_SCORE", 1.4)             # أقل مجموع نقاط للإشارة
+STRICT_SCORE = _f("STRICT_SCORE", 1.6)       # تحت هذا الحد تُقبل الإشارة فقط إذا وافق اتجاه 1H
 MIN_STRATEGIES = _i("MIN_STRATEGIES", 2)     # أقل عدد استراتيجيات متفقة
 ATR_SL_MULT = _f("ATR_SL_MULT", 1.5)         # وقف احتياطي إذا لم تعطِ الاستراتيجيات وقفاً هيكلياً
 RISK_REWARD = _f("RISK_REWARD", 2.0)
@@ -587,12 +588,174 @@ def regime_multiplier(regime: str, kind: str) -> float:
     return 1.0 if kind == "reversal" else 0.6   # range
 
 
+# ------------------ رأي كل استراتيجية في السوق (حتى بدون إشارة) ------------------
+def _v_ema_pullback(x):
+    a = x.iloc[-1]
+    if a.ema20 > a.ema50 > a.ema200:
+        b, t = 1, "اتجاه صاعد (EMA20>50>200)"
+    elif a.ema20 < a.ema50 < a.ema200:
+        b, t = -1, "اتجاه هابط (EMA20<50<200)"
+    else:
+        return 0, "المتوسطات متشابكة: لا اتجاه واضح"
+    d = (a.Close - a.ema20) / a.atr if a.atr > 0 else 0
+    return b, f"{t}. السعر {abs(d):.1f} ATR {'فوق' if d >= 0 else 'تحت'} EMA20، RSI {a.rsi:.0f}. ينتظر ارتداداً إلى EMA20"
+
+
+def _v_fib_pullback(x):
+    n, a = len(x), x.iloc[-1]
+    h, l = x["High"].to_numpy(), x["Low"].to_numpy()
+    ph, pl = pivots(h, 5, "H", n - 150, n), pivots(l, 5, "L", n - 150, n)
+    if a.ema50 > a.ema200:
+        lows = [i for i in pl if ph and i < ph[-1]]
+        if ph and lows and h[ph[-1]] > l[lows[-1]]:
+            H, L = h[ph[-1]], l[lows[-1]]
+            r = (H - a.Close) / (H - L) * 100
+            if r > 100:
+                return 0, "المتوسطات صاعدة لكن السعر كسر بداية آخر موجة: الاتجاه الصاعد مهدد"
+            if r < 0:
+                return 1, "اتجاه صاعد؛ السعر فوق قمة آخر موجة (لا تصحيح بعد)"
+            return 1, f"اتجاه صاعد؛ التصحيح الحالي {r:.0f}% من آخر موجة (المنطقة المستهدفة 50-62%)"
+        return 1, "اتجاه صاعد بلا موجة دافعة واضحة"
+    if a.ema50 < a.ema200:
+        highs = [i for i in ph if pl and i < pl[-1]]
+        if pl and highs and h[highs[-1]] > l[pl[-1]]:
+            H, L = h[highs[-1]], l[pl[-1]]
+            r = (a.Close - L) / (H - L) * 100
+            if r > 100:
+                return 0, "المتوسطات هابطة لكن السعر كسر بداية آخر موجة: الاتجاه الهابط مهدد"
+            if r < 0:
+                return -1, "اتجاه هابط؛ السعر تحت قاع آخر موجة (لا تصحيح بعد)"
+            return -1, f"اتجاه هابط؛ التصحيح الحالي {r:.0f}% من آخر موجة (المنطقة المستهدفة 50-62%)"
+        return -1, "اتجاه هابط بلا موجة دافعة واضحة"
+    return 0, "لا اتجاه مؤكد (EMA50≈EMA200)"
+
+
+def _v_supertrend(x):
+    a = x.iloc[-1]
+    b = int(a.st_dir)
+    q = "قوي" if a.adx >= 25 else "متوسط" if a.adx >= 20 else "ضعيف"
+    return b, f"Supertrend {'صاعد' if b == 1 else 'هابط'}، قوة الاتجاه ADX {a.adx:.0f} ({q})"
+
+
+def _v_ichimoku(x):
+    a = x.iloc[-1]
+    top, bot = np.maximum(a.span_a, a.span_b), np.minimum(a.span_a, a.span_b)
+    tk = "Tenkan فوق Kijun" if a.tenkan > a.kijun else "Tenkan تحت Kijun"
+    if a.Close > top:
+        return 1, f"السعر فوق السحابة؛ {tk}"
+    if a.Close < bot:
+        return -1, f"السعر تحت السحابة؛ {tk}"
+    return 0, f"السعر داخل السحابة (لا اتجاه)؛ {tk}"
+
+
+def _v_donchian(x):
+    a = x.iloc[-1]
+    if not a.don_hi > a.don_lo:
+        return 0, "بيانات غير كافية"
+    pos = (a.Close - a.don_lo) / (a.don_hi - a.don_lo)
+    if pos > 1:
+        return 1, "السعر فوق أعلى 20 شمعة"
+    if pos < 0:
+        return -1, "السعر تحت أدنى 20 شمعة"
+    return 0, f"داخل قناة 20 شمعة عند {pos * 100:.0f}% (0=القاع، 100=القمة)؛ لا اختراق"
+
+
+def _v_macd(x):
+    a, p = x.iloc[-1], x.iloc[-2]
+    b = 1 if a.macd_hist > 0 else -1 if a.macd_hist < 0 else 0
+    return b, (f"الهيستوغرام {'موجب' if b == 1 else 'سالب'} و{'يتزايد' if a.macd_hist > p.macd_hist else 'يتناقص'}؛ "
+               f"MACD {'فوق' if a.macd > 0 else 'تحت'} الصفر")
+
+
+def _v_squeeze(x):
+    a = x.iloc[-1]
+    pct = (x["bb_bw"].iloc[-100:] <= a.bb_bw).mean() * 100
+    st = "انضغاط (استعداد لحركة)" if pct <= 20 else "اتساع" if pct >= 80 else "طبيعي"
+    return 0, f"عرض البولنجر عند المئين {pct:.0f}% — {st}"
+
+
+def _v_session(x):
+    if x.attrs.get("kind") == "crypto":
+        return 0, "غير مفعّلة للكريبتو"
+    a, ts = x.iloc[-1], x.index[-1]
+    day = ts.normalize()
+    asia = x[(x.index >= day) & (x.index < day + pd.Timedelta(hours=7))]
+    if ts.hour < 7 or len(asia) < 20:
+        return 0, "نطاق آسيا قيد التكوين"
+    hi, lo = asia["High"].max(), asia["Low"].min()
+    win = "" if 7 <= ts.hour < 11 else " (خارج نافذة لندن)"
+    if a.Close > hi:
+        return 1, "السعر فوق نطاق آسيا" + win
+    if a.Close < lo:
+        return -1, "السعر تحت نطاق آسيا" + win
+    return 0, "السعر داخل نطاق آسيا" + win
+
+
+def _v_rsi_bb(x):
+    a = x.iloc[-1]
+    pos = (a.Close - a.bb_lo) / (a.bb_up - a.bb_lo) * 100 if a.bb_up > a.bb_lo else 50
+    if a.rsi < 35:
+        return 1, f"تشبع بيع محتمل: RSI {a.rsi:.0f}، السعر عند {pos:.0f}% من نطاق البولنجر"
+    if a.rsi > 65:
+        return -1, f"تشبع شراء محتمل: RSI {a.rsi:.0f}، السعر عند {pos:.0f}% من نطاق البولنجر"
+    return 0, f"RSI {a.rsi:.0f} محايد، السعر عند {pos:.0f}% من نطاق البولنجر"
+
+
+def _v_sr(x):
+    a = x.iloc[-1]
+    sup, res = swing_levels(x)
+    below, above = [s for s in sup if s <= a.Close], [r for r in res if r >= a.Close]
+    parts = []
+    if below and a.atr > 0:
+        parts.append(f"أقرب دعم على بعد {(a.Close - max(below)) / a.atr:.1f} ATR")
+    if above and a.atr > 0:
+        parts.append(f"أقرب مقاومة على بعد {(min(above) - a.Close) / a.atr:.1f} ATR")
+    return 0, "، ".join(parts) or "لا مستويات واضحة"
+
+
+def _v_divergence(x):
+    return 0, "لا يوجد دايفرجنس مكتمل حالياً"
+
+
+def _v_stoch(x):
+    a = x.iloc[-1]
+    b = 1 if a.stoch_k < 20 else -1 if a.stoch_k > 80 else 0
+    z = "تشبع بيع" if b == 1 else "تشبع شراء" if b == -1 else "منطقة وسطى"
+    return b, f"%K={a.stoch_k:.0f} / %D={a.stoch_d:.0f} — {z}"
+
+
+VIEWS = {"ema_pullback": _v_ema_pullback, "fib_pullback": _v_fib_pullback, "supertrend_adx": _v_supertrend,
+         "ichimoku": _v_ichimoku, "donchian": _v_donchian, "macd_cross": _v_macd, "squeeze_breakout": _v_squeeze,
+         "session_breakout": _v_session, "rsi_bollinger": _v_rsi_bb, "sr_candle": _v_sr,
+         "rsi_divergence": _v_divergence, "stochastic": _v_stoch}
+
+
+def build_views(x, found, regime):
+    fired = {s.name: s for s in found}
+    out = []
+    for name, _, weight, kind in STRATEGIES:
+        if name in DISABLED_STRATEGIES:
+            continue
+        try:
+            bias, text = VIEWS[name](x)
+        except Exception:
+            log.exception("view %s failed", name)
+            bias, text = 0, "تعذر الحساب"
+        s = fired.get(name)
+        if s:
+            bias, text = s.side, s.reason
+        out.append({"name": name, "title": STRATEGY_INFO[name]["title"], "bias": int(bias), "signal": bool(s),
+                    "text": text, "kind": kind, "weight": weight, "regime_fit": regime_multiplier(regime, kind)})
+    return out
+
+
+
 def _wait(note: str, **extra) -> dict:
     return {"decision": "WAIT", "side": 0, "note": note, **extra}
 
 
-def analyze(df: pd.DataFrame, spec: SymbolSpec) -> dict:
-    """تحليل على شموع مغلقة فقط: فلاتر → استراتيجيات → تصويت مرجّح → وقف هيكلي → فحص التكلفة."""
+def analyze(df: pd.DataFrame, spec: SymbolSpec, views: bool = True) -> dict:
+    """تحليل على شموع مغلقة فقط: استراتيجيات → آراء → تصويت مرجّح → فلاتر → وقف هيكلي → فحص التكلفة."""
     if len(df) < MIN_BARS:
         return _wait("بيانات غير كافية")
     x = compute_indicators(df)
@@ -601,20 +764,11 @@ def analyze(df: pd.DataFrame, spec: SymbolSpec) -> dict:
     if not a.atr > 0:
         return _wait("ATR غير صالح")
     vr = float(a.atr / a.atr_med) if a.atr_med > 0 else 1.0
-    base = {"bar": str(df.index[-1]), "atr": float(a.atr), "vol_ratio": round(vr, 2)}
-    if not in_liquid_hours(spec.kind, df.index[-1].to_pydatetime()):
-        return _wait("خارج ساعات السيولة (توسع السبريد)", **base)
-    if vr > 3:
-        return _wait("تقلب مفرط (احتمال خبر) — انتظار الهدوء", **base)
-    if vr < 0.4:
-        return _wait("سوق هادئ جداً", **base)
-
     adx_v = float(a.adx)
     regime = "trend" if adx_v >= 25 else "range" if adx_v <= 18 else "mixed"
     htf = htf_direction(df)
 
-    scores, counts, found = {1: 0.0, -1: 0.0}, {1: 0, -1: 0}, []
-    signals = []
+    scores, counts, found, signals = {1: 0.0, -1: 0.0}, {1: 0, -1: 0}, [], []
     for name, fn, weight, kind in STRATEGIES:
         if name in DISABLED_STRATEGIES:
             continue
@@ -636,11 +790,30 @@ def analyze(df: pd.DataFrame, spec: SymbolSpec) -> dict:
     if htf == -side:
         win *= 0.75     # عقوبة للتداول ضد اتجاه الساعة
 
-    res = {**base, "decision": "WAIT", "side": 0, "score": round(win, 2),
+    res = {"bar": str(df.index[-1]), "atr": float(a.atr), "vol_ratio": round(vr, 2),
+           "decision": "WAIT", "side": 0, "score": round(win, 2),
            "long_score": round(scores[1], 2), "short_score": round(scores[-1], 2),
            "regime": regime, "adx": round(adx_v, 1), "rsi": round(float(a.rsi), 1), "htf": htf,
            "signals": signals}
+    if views:
+        vs = build_views(x, found, regime)
+        res["views"] = vs
+        res["bias_counts"] = {"bull": sum(v["bias"] == 1 for v in vs), "bear": sum(v["bias"] == -1 for v in vs),
+                              "neutral": sum(v["bias"] == 0 for v in vs)}
+
+    if not in_liquid_hours(spec.kind, df.index[-1].to_pydatetime()):
+        res["note"] = "خارج ساعات السيولة (توسع السبريد)"
+        return res
+    if vr > 3:
+        res["note"] = "تقلب مفرط (احتمال خبر) — انتظار الهدوء"
+        return res
+    if vr < 0.4:
+        res["note"] = "سوق هادئ جداً"
+        return res
     if not (win >= MIN_SCORE and counts[side] >= MIN_STRATEGIES and win >= 2 * lose):
+        return res
+    if win < STRICT_SCORE and htf != side:
+        res["note"] = "إشارة حدّية: تحتاج توافق اتجاه الساعة (1H)"
         return res
 
     # وقف هيكلي: وسيط مسافات الوقف المقترحة (+0.1 ATR) محصور بين 1 و2.5 ATR
@@ -984,13 +1157,13 @@ class Telegram:
                     if cmd == "/start":
                         self.subs.add(chat)
                         self._save()
-                        await self.send(chat, "✅ تم الاشتراك في الإشارات.\n/stop إلغاء • /status الحالة • /trades الصفقات")
+                        await self.send(chat, "✅ تم الاشتراك في الإشارات.\n/stop إلغاء • /status الحالة • /trades الصفقات • /views BTCUSDT آراء الاستراتيجيات")
                     elif cmd == "/stop":
                         self.subs.discard(chat)
                         self._save()
                         await self.send(chat, "تم إلغاء الاشتراك.")
-                    elif cmd in ("/status", "/trades"):
-                        await self.send(chat, status_fn(cmd))
+                    elif cmd in ("/status", "/trades", "/views"):
+                        await self.send(chat, status_fn(text))
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -1018,6 +1191,11 @@ class MarketEngine:
         self.analysis: Optional[dict] = None
         self.last_bar = None
         self.cooldown_until: Optional[pd.Timestamp] = None
+        self.stats = {"analyses": 0, "signals": 0, "opened": 0, "skipped": {}}
+
+    def _skip(self, a: dict, reason: str):
+        a["skipped"] = reason
+        self.stats["skipped"][reason] = self.stats["skipped"].get(reason, 0) + 1
 
     @property
     def price(self) -> Optional[float]:
@@ -1056,26 +1234,29 @@ class MarketEngine:
             return
         self.last_bar = bar
         self.analysis = a = analyze(closed, self.spec)
+        self.stats["analyses"] += 1
+        if a["decision"] in ("BUY", "SELL"):
+            self.stats["signals"] += 1
         if a["decision"] not in ("BUY", "SELL") or self.trade is not None:
             return
         if self.cooldown_until is not None and bar <= self.cooldown_until:
-            a["skipped"] = "فترة انتظار بعد صفقة سابقة"
+            self._skip(a, "فترة انتظار بعد صفقة سابقة")
             return
         side = a["side"]
         if self.spec.spot and side == -1 and not ALLOW_SPOT_SHORT:
-            a["skipped"] = "البيع المكشوف غير متاح على كريبتو السبوت"
+            self._skip(a, "البيع المكشوف غير متاح على كريبتو السبوت")
             return
         ok, why = portfolio_can_open(self)
         if not ok:
-            a["skipped"] = why
+            self._skip(a, why)
             return
         sz = size_position(self.spec, account.balance, price, a["sl_dist"])
         if not sz["ok"]:
-            a["skipped"] = sz["reason"]
+            self._skip(a, sz["reason"])
             return
         open_risk = sum(e.trade.risk_usd for e in engines.values() if e.trade)
         if open_risk + sz["risk_usd"] > account.balance * MAX_TOTAL_RISK_PCT / 100:
-            a["skipped"] = "مجموع المخاطرة المفتوحة سيتجاوز الحد"
+            self._skip(a, "مجموع المخاطرة المفتوحة سيتجاوز الحد")
             return
         t = Trade.open(self.symbol, side, price, a["sl_dist"], RISK_REWARD,
                        [s["name"] for s in a["signals"] if s["side"] == side], a["score"],
@@ -1084,6 +1265,7 @@ class MarketEngine:
                        risk_usd=sz["risk_usd"], margin_usd=sz["margin_usd"], sl_source=a["sl_source"])
         t.checked_until = str(self.df.index[-1])
         self.trade = t
+        self.stats["opened"] += 1
         await notify(self._signal_message(t, a))
 
     async def _manage(self, closed: pd.DataFrame, price: float, notify):
@@ -1155,7 +1337,7 @@ def backtest(df: pd.DataFrame, symbol: str, spec: SymbolSpec, balance: float = A
     bal, skipped_cap = balance, 0
     i, n = MIN_BARS, len(df)
     while i < n - 1:
-        res = analyze(df.iloc[:i + 1], spec)
+        res = analyze(df.iloc[:i + 1], spec, views=False)
         if res["decision"] not in ("BUY", "SELL") or (spec.spot and res["side"] == -1 and not ALLOW_SPOT_SHORT):
             i += 1
             continue
@@ -1222,7 +1404,23 @@ async def notify(msg: str):
     await telegram.broadcast(msg)
 
 
-def status_text(cmd: str) -> str:
+def status_text(text: str) -> str:
+    parts = text.split()
+    cmd = parts[0].lower().split("@")[0]
+    if cmd == "/views":
+        sym = parts[1].upper() if len(parts) > 1 else "BTCUSDT"
+        sym = {"WTIUSD": "USOIL"}.get(sym, sym)
+        e = engines.get(sym)
+        if not e or not e.analysis or not e.analysis.get("views"):
+            return f"لا يوجد تحليل لـ {sym} بعد (السوق مغلق أو بانتظار إغلاق شمعة).\nالرموز: " + ", ".join(engines)
+        a = e.analysis
+        icon = {1: "🟢", -1: "🔴", 0: "⚪"}
+        lines = [f"📊 <b>{sym}</b> | القرار: <b>{a['decision']}</b> | النقاط {a['score']} | {a['regime']} (ADX {a['adx']})"]
+        for v in a["views"]:
+            lines.append(f"{icon[v['bias']]} <b>{html.escape(v['title'])}</b>{' ⚡' if v['signal'] else ''}\n   {html.escape(v['text'])}")
+        if a.get("note"):
+            lines.append(f"⚠️ {a['note']}")
+        return "\n".join(lines)
     lines = [f"💰 الرصيد الورقي: ${account.balance:.2f}"]
     for e in engines.values():
         if cmd == "/trades":
@@ -1308,10 +1506,52 @@ async def api_analyze(symbol: str):
     return e.summary()
 
 
+def why_no_trade(e: MarketEngine) -> dict:
+    a = e.analysis or {}
+    reasons = []
+    if e.df is None or not e.data_ok:
+        reasons.append(f"لا توجد بيانات صالحة: {e.note}")
+    if not is_market_open(e.spec.kind):
+        reasons.append("السوق مغلق (يفتح الأحد 22:00 UTC)")
+    if e.analysis is None and e.data_ok and is_market_open(e.spec.kind):
+        reasons.append("لم يُجرَ أي تحليل بعد (بانتظار إغلاق شمعة)")
+    if a.get("note"):
+        reasons.append(a["note"])
+    if a and a.get("decision") == "WAIT" and not a.get("note"):
+        sig = a.get("signals", [])
+        side = 1 if a.get("long_score", 0) >= a.get("short_score", 0) else -1
+        n_side = sum(1 for s in sig if s["side"] == side)
+        win, lose = max(a.get("long_score", 0), a.get("short_score", 0)), min(a.get("long_score", 0), a.get("short_score", 0))
+        if not sig:
+            reasons.append("لم تُصدر أي استراتيجية إشارة في آخر شمعة")
+        elif a.get("score", 0) < MIN_SCORE:
+            reasons.append(f"النقاط {a.get('score')} أقل من الحد {MIN_SCORE} (شراء {a.get('long_score')} / بيع {a.get('short_score')})")
+        elif n_side < MIN_STRATEGIES:
+            reasons.append(f"استراتيجية واحدة فقط تتفق (المطلوب {MIN_STRATEGIES})")
+        elif win < 2 * lose:
+            reasons.append("تعارض بين استراتيجيات الشراء والبيع")
+    if a.get("skipped"):
+        reasons.append("إشارة لم تُنفَّذ: " + a["skipped"])
+    if e.trade:
+        reasons.append("توجد صفقة مفتوحة بالفعل على هذا الرمز")
+    return {"symbol": e.symbol, "source": e.source, "data_ok": e.data_ok, "market_open": is_market_open(e.spec.kind),
+            "last_analyzed_bar": a.get("bar"), "decision": a.get("decision"), "score": a.get("score"),
+            "regime": a.get("regime"), "reasons": reasons or ["لا سبب ظاهر"], "stats": e.stats}
+
+
+@app.get("/api/why")
+async def api_why():
+    recipients = len(telegram.subs | ADMIN_CHAT_IDS)
+    return {"telegram_enabled": telegram.enabled, "telegram_recipients": recipients,
+            "telegram_hint": None if recipients else "لا يوجد مستلم: أرسل /start للبوت أو اضبط ADMIN_CHAT_IDS",
+            "thresholds": {"min_score": MIN_SCORE, "min_strategies": MIN_STRATEGIES},
+            "symbols": [why_no_trade(e) for e in engines.values()]}
+
+
 @app.get("/api/strategies")
 async def api_strategies():
     return {
-        "params": {"min_score": MIN_SCORE, "min_strategies": MIN_STRATEGIES, "risk_reward": RISK_REWARD,
+        "params": {"min_score": MIN_SCORE, "strict_score": STRICT_SCORE, "min_strategies": MIN_STRATEGIES, "risk_reward": RISK_REWARD,
                    "atr_sl_mult_fallback": ATR_SL_MULT, "max_cost_ratio": MAX_COST_RATIO},
         "filters": ["نظام السوق ADX: ≥25 اتجاه، ≤18 عرضي", "اتجاه 1H (EMA20/50): عقوبة 25% عند المعاكسة",
                     "تقلب ATR/وسيطه: رفض فوق 3× أو تحت 0.4×", "تجنب 21:00-24:00 UTC لغير الكريبتو",
@@ -1401,36 +1641,76 @@ async def api_candles(symbol: str, limit: int = Query(200, ge=50, le=300)):
 
 CHART_PAGE = """<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>__SYM__</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/lightweight-charts/4.1.3/lightweight-charts.standalone.production.min.js"></script>
-<style>:root{color-scheme:light dark;--bg:#fff;--fg:#1a1a1a;--mut:#6b7280;--bd:#e5e7eb}
-@media(prefers-color-scheme:dark){:root{--bg:#111318;--fg:#e8e8ea;--mut:#9aa0aa;--bd:#2a2e37}}
+<style>:root{color-scheme:light dark;--bg:#fff;--fg:#1a1a1a;--mut:#6b7280;--bd:#e5e7eb;--card:#f6f7f9}
+@media(prefers-color-scheme:dark){:root{--bg:#111318;--fg:#e8e8ea;--mut:#9aa0aa;--bd:#2a2e37;--card:#1a1d24}}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px system-ui,sans-serif}
-header{display:flex;gap:12px;align-items:center;padding:10px 12px}a{color:inherit}.m{color:var(--mut)}
-#c{height:calc(100vh - 90px);min-height:320px}</style></head><body>
-<header><a href="/">← الرئيسية</a><b>__SYM__</b><span id="i" class="m"></span></header><div id="c"></div>
+header{display:flex;gap:12px;align-items:center;padding:10px 12px;flex-wrap:wrap}a{color:inherit}.m{color:var(--mut)}
+#box{height:50vh;min-height:300px;direction:ltr;position:relative}canvas{display:block}
+.bt{display:flex;gap:8px;padding:0 12px 8px}.bt button{background:var(--card);color:var(--fg);border:1px solid var(--bd);border-radius:8px;padding:6px 12px}
+#v{padding:0 12px 24px}.sum{background:var(--card);border-radius:10px;padding:10px;margin-bottom:8px;line-height:1.7}
+.r{border-bottom:1px solid var(--bd);padding:8px 0}.tag{background:#16a34a;color:#fff;border-radius:6px;padding:1px 6px;font-size:12px}
+.lg{padding:0 12px 6px;font-size:12px}.lg span{margin-inline-end:10px}</style></head><body>
+<header><a href="/">← الرئيسية</a><b>__SYM__</b><span id="i" class="m"></span></header>
+<div id="box"><canvas id="cv"></canvas></div>
+<div class="lg m"><span style="color:#3b82f6">● EMA20</span><span style="color:#f59e0b">● EMA50</span><span style="color:#a855f7">● EMA200</span></div>
+<div class="bt"><button onclick="N=60;draw()">60</button><button onclick="N=100;draw()">100</button><button onclick="N=200;draw()">200</button></div>
+<div id="v"></div>
 <script>
-const dark=matchMedia('(prefers-color-scheme: dark)').matches;
-const chart=LightweightCharts.createChart(document.getElementById('c'),{
- layout:{background:{color:dark?'#111318':'#ffffff'},textColor:dark?'#e8e8ea':'#1a1a1a'},
- grid:{vertLines:{color:dark?'#1f232b':'#f1f1f1'},horzLines:{color:dark?'#1f232b':'#f1f1f1'}},
- timeScale:{timeVisible:true,secondsVisible:false},autoSize:true});
-const cs=chart.addCandlestickSeries({upColor:'#16a34a',downColor:'#dc2626',borderVisible:false,wickUpColor:'#16a34a',wickDownColor:'#dc2626'});
-const l20=chart.addLineSeries({color:'#3b82f6',lineWidth:1,priceLineVisible:false});
-const l50=chart.addLineSeries({color:'#f59e0b',lineWidth:1,priceLineVisible:false});
-const l200=chart.addLineSeries({color:'#a855f7',lineWidth:2,priceLineVisible:false});
-let lines=[],first=true;
-async function load(){try{
- const d=await (await fetch('/api/candles/__SYM__')).json();
- cs.applyOptions({priceFormat:{type:'price',precision:d.decimals,minMove:Math.pow(10,-d.decimals)}});
- cs.setData(d.candles);l20.setData(d.ema20);l50.setData(d.ema50);l200.setData(d.ema200);
- lines.forEach(x=>cs.removePriceLine(x));lines=[];
- if(d.trade){const t=d.trade;
-  [['دخول',t.entry,'#9ca3af'],['وقف',t.sl,'#dc2626'],['هدف',t.tp,'#16a34a']].forEach(([n,p,c])=>
-   lines.push(cs.createPriceLine({price:p,color:c,lineWidth:2,lineStyle:2,title:n})));}
- document.getElementById('i').textContent=(d.trade?(d.trade.side==1?'صفقة شراء مفتوحة':'صفقة بيع مفتوحة'):'لا توجد صفقة')+' | EMA 20/50/200';
- if(first){chart.timeScale().fitContent();first=false;}
-}catch(e){document.getElementById('i').textContent='لا توجد بيانات بعد'}}
-load();setInterval(load,30000);
+const SYM='__SYM__';let DATA=null,N=100;
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function draw(){
+ const d=DATA;if(!d||!d.candles.length)return;
+ const cv=document.getElementById('cv'),box=document.getElementById('box'),dpr=window.devicePixelRatio||1;
+ const W=box.clientWidth,H=box.clientHeight;
+ cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';
+ const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,W,H);
+ const fg=css('--fg'),mut=css('--mut'),bd=css('--bd'),bg=css('--bg');
+ const C=d.candles.slice(-N),padR=66,padB=20,padT=8,pw=W-padR,ph=H-padB-padT;
+ let hi=-Infinity,lo=Infinity;C.forEach(c=>{hi=Math.max(hi,c.high);lo=Math.min(lo,c.low)});
+ const T=d.trade;if(T){[T.entry,T.sl,T.tp].forEach(v=>{hi=Math.max(hi,v);lo=Math.min(lo,v)})}
+ const pad=(hi-lo)*0.06||1;hi+=pad;lo-=pad;
+ const y=v=>padT+(hi-v)/(hi-lo)*ph,step=pw/C.length,x=i=>step*(i+0.5);
+ g.font='11px system-ui';
+ for(let k=0;k<=5;k++){const v=lo+(hi-lo)*k/5,yy=y(v);g.strokeStyle=bd;g.lineWidth=1;g.beginPath();g.moveTo(0,yy);g.lineTo(pw,yy);g.stroke();
+  g.fillStyle=mut;g.textAlign='left';g.textBaseline='middle';g.fillText(v.toFixed(d.decimals),pw+4,yy);}
+ g.textAlign='center';g.textBaseline='alphabetic';
+ for(let k=0;k<5;k++){const i=Math.floor((C.length-1)*k/4);g.fillStyle=mut;
+  g.fillText(new Date(C[i].time*1000).toISOString().slice(5,16).replace('T',' '),Math.min(Math.max(x(i),38),pw-38),H-5);}
+ const lineOf=(arr,col,w)=>{const m=new Map(arr.map(p=>[p.time,p.value]));g.strokeStyle=col;g.lineWidth=w;g.beginPath();let st=false;
+  C.forEach((c,i)=>{const v=m.get(c.time);if(v===undefined){st=false;return}if(!st){g.moveTo(x(i),y(v));st=true}else g.lineTo(x(i),y(v))});g.stroke()};
+ lineOf(d.ema200,'#a855f7',1.6);lineOf(d.ema50,'#f59e0b',1.2);lineOf(d.ema20,'#3b82f6',1.2);
+ const bw=Math.max(1,step*0.65);
+ C.forEach((c,i)=>{const col=c.close>=c.open?'#16a34a':'#dc2626';g.strokeStyle=col;g.fillStyle=col;g.lineWidth=1;
+  g.beginPath();g.moveTo(x(i),y(c.high));g.lineTo(x(i),y(c.low));g.stroke();
+  g.fillRect(x(i)-bw/2,y(Math.max(c.open,c.close)),bw,Math.max(1,Math.abs(y(c.open)-y(c.close))))});
+ if(T){[['دخول',T.entry,'#9ca3af'],['وقف',T.sl,'#dc2626'],['هدف',T.tp,'#16a34a']].forEach(([n,p,c])=>{
+  g.strokeStyle=c;g.setLineDash([6,4]);g.lineWidth=1.5;g.beginPath();g.moveTo(0,y(p));g.lineTo(pw,y(p));g.stroke();g.setLineDash([]);
+  g.fillStyle=c;g.textAlign='left';g.textBaseline='middle';g.fillText(n+' '+p.toFixed(d.decimals),4,y(p)-8)})}
+ const last=C[C.length-1].close;g.fillStyle=fg;g.fillRect(pw,y(last)-8,padR,16);
+ g.fillStyle=bg;g.textAlign='left';g.textBaseline='middle';g.fillText(last.toFixed(d.decimals),pw+4,y(last));
+}
+function views(a,m){
+ const el=document.getElementById('v');
+ if(!a||!a.views){el.innerHTML='<div class="sum m">'+(m?'السوق مغلق حالياً: لا يوجد تحليل جديد.':'لم يُحلَّل بعد: بانتظار إغلاق شمعة.')+'</div>';return}
+ const ic=b=>b==1?'🟢':b==-1?'🔴':'⚪',bc=a.bias_counts||{};
+ const dec={BUY:'شراء 🟢',SELL:'بيع 🔴',WAIT:'انتظار ⚪'}[a.decision]||a.decision;
+ const htf={1:'صاعد','-1':'هابط',0:'محايد'}[a.htf];
+ let h='<div class="sum"><b>القرار: '+dec+'</b> | النقاط '+a.score+' (شراء '+a.long_score+' / بيع '+a.short_score+')<br>السوق: '+a.regime+' (ADX '+a.adx+') | اتجاه 1H: '+htf+'<br>آراء الاستراتيجيات: 🟢 '+bc.bull+' صاعد • 🔴 '+bc.bear+' هابط • ⚪ '+bc.neutral+' محايد'+
+  (a.note?'<br>⚠️ '+a.note:'')+(a.skipped?'<br>⛔ لم تُنفَّذ: '+a.skipped:'')+'</div>';
+ h+=a.views.map(v=>'<div class="r"><div>'+ic(v.bias)+' <b>'+v.title+'</b> '+(v.signal?'<span class="tag">إشارة</span>':'')+'</div><div class="m">'+v.text+'</div></div>').join('');
+ el.innerHTML=h;
+}
+async function load(){
+ const inf=document.getElementById('i');
+ try{
+  const r=await fetch('/api/candles/'+SYM);
+  if(!r.ok){inf.textContent='لا توجد بيانات بعد ('+r.status+') — تحقق من /api/status';return}
+  DATA=await r.json();draw();
+  inf.textContent=(DATA.trade?(DATA.trade.side==1?'صفقة شراء مفتوحة':'صفقة بيع مفتوحة'):'لا توجد صفقة');
+  const s=await (await fetch('/api/analyze/'+SYM)).json();views(s.analysis,!s.market_open);
+ }catch(e){inf.textContent='خطأ: '+e}
+}
+addEventListener('resize',draw);load();setInterval(load,30000);
 </script></body></html>"""
 
 
