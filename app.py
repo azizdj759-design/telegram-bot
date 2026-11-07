@@ -57,7 +57,7 @@ def _b(name: str, default: str = "0") -> bool:
     return os.environ.get(name, default).strip().lower() in ("1", "true", "yes", "on")
 
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8741070555:AAGf6ys8UH8TZwlQpy_vWff9YONZ9BDmOok")  # متغير البيئة له الأولوية إن وُجد
 # معرّفات ثابتة تصلها الإشارات دائماً (تحميك من ضياع المشتركين عند إعادة تشغيل Render)
 ADMIN_CHAT_IDS = {int(v) for v in os.environ.get("ADMIN_CHAT_IDS", "").replace(" ", "").split(",")
                   if v.lstrip("-").isdigit()}
@@ -112,7 +112,7 @@ SYMBOLS = {
     "ETHUSDT": SymbolSpec("crypto", 0.1, 2, 1, 0.001, 0.001, 2, "crypto", spot=True, fee_pct=0.001),
     "XAUUSD": SymbolSpec("metal", 0.1, 2, 100, 0.01, 0.01, 2.5, "metals", tv=("OANDA", "XAUUSD"), yf="GC=F"),
     "XAGUSD": SymbolSpec("metal", 0.01, 3, 5000, 0.01, 0.01, 3, "metals", tv=("OANDA", "XAGUSD"), yf="SI=F"),
-    "WTIUSD": SymbolSpec("energy", 0.01, 2, 1000, 0.01, 0.01, 3, "oil", tv=("TVC", "USOIL"), yf="CL=F"),
+    "USOIL": SymbolSpec("energy", 0.01, 2, 1000, 0.01, 0.01, 3, "oil", tv=("TVC", "USOIL"), yf="CL=F"),
     "EURUSD": SymbolSpec("forex", 0.0001, 5, 100000, 0.01, 0.01, 0.8, "usd_short", tv=("FX_IDC", "EURUSD"), yf="EURUSD=X"),
     "GBPUSD": SymbolSpec("forex", 0.0001, 5, 100000, 0.01, 0.01, 1.2, "usd_short", tv=("FX_IDC", "GBPUSD"), yf="GBPUSD=X"),
     "AUDUSD": SymbolSpec("forex", 0.0001, 5, 100000, 0.01, 0.01, 1.2, "usd_short", tv=("FX_IDC", "AUDUSD"), yf="AUDUSD=X"),
@@ -1380,6 +1380,68 @@ async def test_telegram():
     return {"status": "success" if sent else "no_subscribers", "sent": sent}
 
 
+@app.get("/api/candles/{symbol}")
+async def api_candles(symbol: str, limit: int = Query(200, ge=50, le=300)):
+    e = engines.get(symbol.upper())
+    if not e or e.df is None:
+        raise HTTPException(404, "لا توجد بيانات لهذا الرمز بعد")
+    x = compute_indicators(e.df).tail(limit)
+    ts = [int(t.timestamp()) for t in x.index]
+
+    def line(col):
+        return [{"time": t, "value": float(v)} for t, v in zip(ts, x[col]) if v == v]
+
+    candles = [{"time": t, "open": float(r.Open), "high": float(r.High), "low": float(r.Low), "close": float(r.Close)}
+               for t, (_, r) in zip(ts, x.iterrows())]
+    tr = e.trade
+    return {"symbol": e.symbol, "decimals": e.spec.decimals, "candles": candles,
+            "ema20": line("ema20"), "ema50": line("ema50"), "ema200": line("ema200"),
+            "trade": {"side": tr.side, "entry": tr.entry, "sl": tr.sl, "tp": tr.tp} if tr else None}
+
+
+CHART_PAGE = """<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>__SYM__</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lightweight-charts/4.1.3/lightweight-charts.standalone.production.min.js"></script>
+<style>:root{color-scheme:light dark;--bg:#fff;--fg:#1a1a1a;--mut:#6b7280;--bd:#e5e7eb}
+@media(prefers-color-scheme:dark){:root{--bg:#111318;--fg:#e8e8ea;--mut:#9aa0aa;--bd:#2a2e37}}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px system-ui,sans-serif}
+header{display:flex;gap:12px;align-items:center;padding:10px 12px}a{color:inherit}.m{color:var(--mut)}
+#c{height:calc(100vh - 90px);min-height:320px}</style></head><body>
+<header><a href="/">← الرئيسية</a><b>__SYM__</b><span id="i" class="m"></span></header><div id="c"></div>
+<script>
+const dark=matchMedia('(prefers-color-scheme: dark)').matches;
+const chart=LightweightCharts.createChart(document.getElementById('c'),{
+ layout:{background:{color:dark?'#111318':'#ffffff'},textColor:dark?'#e8e8ea':'#1a1a1a'},
+ grid:{vertLines:{color:dark?'#1f232b':'#f1f1f1'},horzLines:{color:dark?'#1f232b':'#f1f1f1'}},
+ timeScale:{timeVisible:true,secondsVisible:false},autoSize:true});
+const cs=chart.addCandlestickSeries({upColor:'#16a34a',downColor:'#dc2626',borderVisible:false,wickUpColor:'#16a34a',wickDownColor:'#dc2626'});
+const l20=chart.addLineSeries({color:'#3b82f6',lineWidth:1,priceLineVisible:false});
+const l50=chart.addLineSeries({color:'#f59e0b',lineWidth:1,priceLineVisible:false});
+const l200=chart.addLineSeries({color:'#a855f7',lineWidth:2,priceLineVisible:false});
+let lines=[],first=true;
+async function load(){try{
+ const d=await (await fetch('/api/candles/__SYM__')).json();
+ cs.applyOptions({priceFormat:{type:'price',precision:d.decimals,minMove:Math.pow(10,-d.decimals)}});
+ cs.setData(d.candles);l20.setData(d.ema20);l50.setData(d.ema50);l200.setData(d.ema200);
+ lines.forEach(x=>cs.removePriceLine(x));lines=[];
+ if(d.trade){const t=d.trade;
+  [['دخول',t.entry,'#9ca3af'],['وقف',t.sl,'#dc2626'],['هدف',t.tp,'#16a34a']].forEach(([n,p,c])=>
+   lines.push(cs.createPriceLine({price:p,color:c,lineWidth:2,lineStyle:2,title:n})));}
+ document.getElementById('i').textContent=(d.trade?(d.trade.side==1?'صفقة شراء مفتوحة':'صفقة بيع مفتوحة'):'لا توجد صفقة')+' | EMA 20/50/200';
+ if(first){chart.timeScale().fitContent();first=false;}
+}catch(e){document.getElementById('i').textContent='لا توجد بيانات بعد'}}
+load();setInterval(load,30000);
+</script></body></html>"""
+
+
+@app.get("/chart/{symbol}", response_class=HTMLResponse)
+async def chart_page(symbol: str):
+    sym = symbol.upper()
+    if sym not in engines:
+        raise HTTPException(404, "رمز غير معروف")
+    return CHART_PAGE.replace("__SYM__", sym)
+
+
 DASHBOARD = """<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Zero Reversal Engine</title>
 <style>:root{color-scheme:light dark;--bg:#fff;--fg:#1a1a1a;--mut:#6b7280;--bd:#e5e7eb;--g:#16a34a;--r:#dc2626}
@@ -1398,7 +1460,7 @@ document.getElementById('acc').textContent='الرصيد الورقي: $'+ac.bal
 const d=await (await fetch('/api/status')).json();
 document.getElementById('t').innerHTML=d.map(e=>{const a=e.analysis||{};const t=e.trade;
 const note=a.skipped||a.note||e.note;
-return `<tr><td>${e.symbol}</td><td>${e.price??'—'}</td><td class="${cls(a.decision)}">${a.decision??'—'}</td>
+return `<tr><td><a href="/chart/${e.symbol}">${e.symbol} 📈</a></td><td>${e.price??'—'}</td><td class="${cls(a.decision)}">${a.decision??'—'}</td>
 <td>${a.score??'—'}</td><td>${a.regime??'—'}</td>
 <td>${t?(t.side==1?'شراء ':'بيع ')+t.lots+' @ '+t.entry.toFixed(4):'—'}</td><td class="m">${note}</td></tr>`}).join('')}catch(e){}}
 load();setInterval(load,15000);
