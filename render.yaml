@@ -1,6 +1,21 @@
 services:
   - type: web
-    name: crypto-signal-app
-    env: docker
+    name: zero-reversal-engine
+    runtime: docker
     plan: free
-    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false            # ضعه من لوحة Render
+      - key: ADMIN_CHAT_IDS
+        sync: false            # رقم محادثتك (يصلك دائماً حتى بعد إعادة التشغيل)
+      - key: ACCOUNT_BALANCE
+        value: "100"           # رأس مالك بالدولار
+      - key: RISK_PCT
+        value: "1"
+      - key: MAX_RISK_PCT
+        value: "2"
+      - key: LEVERAGE
+        value: "100"
+      - key: MAX_OPEN_TRADES
+        value: "2"
