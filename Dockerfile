@@ -1,13 +1,15 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-# تثبيت الحزم الأساسية
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+# TradingView (اختياري): إن فشل التثبيت يكمل البناء ويُستخدم Yahoo للفوركس والذهب
+RUN pip install --no-cache-dir git+https://github.com/rongardF/tvdatafeed.git || echo "tvdatafeed skipped"
 
-COPY . .
-
-# تشغيل التطبيق على المنفذ الذي يطلبه Render
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "10000"]
+COPY app.py .
+EXPOSE 10000
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-10000}"]
