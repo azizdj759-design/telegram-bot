@@ -1,5 +1,5 @@
 """
-Zero Reversal Engine v48.1  (app.py)
+Zero Reversal Engine v48.2  (app.py)
 - 12 استراتيجيات مستقلة + تصويت مرجّح + وقف هيكلي لكل استراتيجية
 - فلاتر: نظام السوق ADX، اتجاه 1H، التقلب، ساعات السيولة، تكلفة السبريد
 - رأس مال صغير: حجم الصفقة حسب المخاطرة والهامش وأصغر عقد، حدود يومية، حساب ورقي
@@ -69,15 +69,20 @@ POLL_SECONDS = _i("POLL_SECONDS", 30)
 FETCH_INTERVAL = _i("FETCH_INTERVAL", 60)
 MIN_BARS = 150
 BAR_FETCH = _i("BAR_FETCH", 600)                 # عدد الشموع المحمّلة (للعرض والتحليل)
-REQUIRE_CORE = _b("REQUIRE_CORE", "1")           # الصفقة تتطلب موافقة استراتيجية أساسية واحدة على الأقل
+CORE_CONFIRM = _i("CORE_CONFIRM", 2)             # أقل عدد استراتيجيات أساسية (ICT/SMC/إليوت/فني) تؤكد الاتجاه
+SETUP_COUNTS = _b("SETUP_COUNTS", "1")           # 1: الإعداد المؤكد (قبل وصول السعر للمنطقة) يُحسب تأكيداً؛ 0: الإشارات المكتملة فقط
+CORE_MIN_SIGNALS = _i("CORE_MIN_SIGNALS", 1)     # أقل عدد إشارات أساسية مكتملة (⚡) ضمن التأكيد، والباقي يمكن أن يكون إعداداً (◔)
+SETUP_BONUS = _f("SETUP_BONUS", 0.35)            # نقاط إضافية لكل استراتيجية أساسية في وضع الإعداد
+MIN_SL_ATR = _f("MIN_SL_ATR", 1.0)               # أصغر وقف (× ATR)
+MAX_SL_ATR = _f("MAX_SL_ATR", 3.5)               # أكبر وقف (× ATR)
 BAR_MINUTES = 15
-MIN_SCORE = _f("MIN_SCORE", 1.4)             # أقل مجموع نقاط للإشارة
-STRICT_SCORE = _f("STRICT_SCORE", 1.6)       # تحت هذا الحد تُقبل الإشارة فقط إذا وافق اتجاه 1H
-MIN_STRATEGIES = _i("MIN_STRATEGIES", 2)     # أقل عدد استراتيجيات متفقة
+MIN_SCORE = _f("MIN_SCORE", 1.0)             # أقل مجموع نقاط للإشارة
+STRICT_SCORE = _f("STRICT_SCORE", 1.3)       # تحت هذا الحد تُقبل الإشارة فقط إذا وافق اتجاه 1H
+MIN_STRATEGIES = _i("MIN_STRATEGIES", 1)     # أقل عدد استراتيجيات متفقة
 ATR_SL_MULT = _f("ATR_SL_MULT", 1.5)         # وقف احتياطي إذا لم تعطِ الاستراتيجيات وقفاً هيكلياً
 RISK_REWARD = _f("RISK_REWARD", 2.0)
 COOLDOWN_BARS = _i("COOLDOWN_BARS", 4)
-MAX_COST_RATIO = _f("MAX_COST_RATIO", 0.20)  # تُرفض الصفقة إذا السبريد+العمولة > 20% من مسافة الوقف
+MAX_COST_RATIO = _f("MAX_COST_RATIO", 0.35)  # السبريد+العمولة يجب ألا تتجاوز هذه النسبة من الوقف (يُوسَّع الوقف تلقائياً إن أمكن)
 DISABLED_STRATEGIES = {s.strip() for s in os.environ.get("DISABLED_STRATEGIES", "").split(",") if s.strip()}
 
 # --- رأس المال الصغير وإدارة المخاطر ---
@@ -90,7 +95,8 @@ MAX_MARGIN_PCT = _f("MAX_MARGIN_PCT", 40)         # أقصى هامش مستخد
 MAX_OPEN_TRADES = _i("MAX_OPEN_TRADES", 2)
 DAILY_LOSS_LIMIT_PCT = _f("DAILY_LOSS_LIMIT_PCT", 3.0)
 MAX_CONSEC_LOSSES = _i("MAX_CONSEC_LOSSES", 3)
-ALLOW_SPOT_SHORT = _b("ALLOW_SPOT_SHORT", "0")    # البيع على كريبتو السبوت غير ممكن افتراضياً
+ALLOW_SPOT_SHORT = _b("ALLOW_SPOT_SHORT", "1")    # إشارات البيع على الكريبتو (نفّذها عبر عقود/فيوتشرز)؛ ضعه 0 لو تتداول سبوت فقط
+CRYPTO_FEE_PCT = _f("CRYPTO_FEE_PCT", 0.0005)     # عمولة كل جهة للكريبتو (0.0005 = 0.05%)
 
 
 @dataclass(frozen=True)
@@ -111,8 +117,8 @@ class SymbolSpec:
 
 
 SYMBOLS = {
-    "BTCUSDT": SymbolSpec("crypto", 1.0, 2, 1, 0.0001, 0.0001, 2, "crypto", spot=True, fee_pct=0.001),
-    "ETHUSDT": SymbolSpec("crypto", 0.1, 2, 1, 0.001, 0.001, 2, "crypto", spot=True, fee_pct=0.001),
+    "BTCUSDT": SymbolSpec("crypto", 1.0, 2, 1, 0.0001, 0.0001, 2, "crypto", spot=True, fee_pct=CRYPTO_FEE_PCT),
+    "ETHUSDT": SymbolSpec("crypto", 0.1, 2, 1, 0.001, 0.001, 2, "crypto", spot=True, fee_pct=CRYPTO_FEE_PCT),
     "XAUUSD": SymbolSpec("metal", 0.1, 2, 100, 0.01, 0.01, 2.5, "metals", tv=("OANDA", "XAUUSD"), yf="GC=F"),
     "XAGUSD": SymbolSpec("metal", 0.01, 3, 5000, 0.01, 0.01, 3, "metals", tv=("OANDA", "XAGUSD"), yf="SI=F"),
     "USOIL": SymbolSpec("energy", 0.01, 2, 1000, 0.01, 0.01, 3, "oil", tv=("TVC", "USOIL"), yf="CL=F"),
@@ -653,7 +659,8 @@ def _scan_ict(x):
                    "ICT: سحب سيولة + MSS + عودة إلى OTE" + (" مع FVG" if best["fvg_overlap"] else ""),
                    sl=best["sl"], zone=best["zone"])
     return {"bias": best["side"] if best["ok2"] else 0, "text": best["text"] or "لا إعداد ICT: لا سحب سيولة حديث",
-            "signal": sig, "overlay": best["overlay"] if best["stage"] >= 1 else _ov(), "checks": _chk(best["checks"])}
+            "signal": sig, "overlay": best["overlay"] if best["stage"] >= 1 else _ov(), "checks": _chk(best["checks"]),
+            "sl": best["sl"], "zone": best["zone"]}
 
 
 # ---------------------------------------------------------------- SMC
@@ -727,7 +734,8 @@ def _scan_smc(x):
                    f"SMC: {best['name']} + ارتداد من Order Block" + (" (أول لمسة)" if best["first"] else ""),
                    sl=best["sl"], zone=best["zone"])
     return {"bias": best["side"] if best["ok2"] else 0, "text": best["text"] or "لا كسر هيكل حديث (BOS/CHoCH)",
-            "signal": sig, "overlay": best["overlay"] if best["stage"] >= 1 else _ov(), "checks": _chk(best["checks"])}
+            "signal": sig, "overlay": best["overlay"] if best["stage"] >= 1 else _ov(), "checks": _chk(best["checks"]),
+            "sl": best["sl"], "zone": best["zone"]}
 
 
 # ---------------------------------------------------------------- موجات إليوت
@@ -789,7 +797,8 @@ def _ell_dir(x, side):
         txt = ""
     strength = 0.65 if pat and pat[0] == "w5" else 0.75 + (0.1 if pat and 0.5 <= pat[2] <= 0.618 else 0)
     return {"side": side, "stage": sum(bool(o) for o, _ in chk), "trigger": trigger, "ok2": pat is not None,
-            "overlay": ov, "checks": chk, "sl": sl, "text": txt, "strength": strength, "txt_sig": txt}
+            "overlay": ov, "checks": chk, "sl": sl, "text": txt, "strength": strength, "txt_sig": txt,
+            "tgt": (P(tgt) if tgt is not None else None)}
 
 
 def _scan_elliott(x):
@@ -798,7 +807,8 @@ def _scan_elliott(x):
     sig = _sig("elliott", best["side"], best["strength"], "إليوت: " + best["txt_sig"], sl=best["sl"]) if best["trigger"] else None
     return {"bias": best["side"] if best["ok2"] else 0,
             "text": best["text"] or "لا عدّ إليوت صالح حالياً: آخر المحاور لا تحقق قواعد الموجة 1-2",
-            "signal": sig, "overlay": best["overlay"], "checks": _chk(best["checks"])}
+            "signal": sig, "overlay": best["overlay"], "checks": _chk(best["checks"]),
+            "sl": best["sl"], "tgt": best.get("tgt")}
 
 
 # ---------------------------------------------------------------- التحليل الفني الكلاسيكي
@@ -855,7 +865,7 @@ def _scan_tech(x):
     sig = _sig("technical", best["side"], best["strength"],
                f"التحليل الفني: اتجاه + زخم + قوة + محفز ({best['pname']})", sl=best["sl"]) if best["trigger"] else None
     return {"bias": best["side"] if best["stage"] >= 3 else 0, "text": best["text"], "signal": sig,
-            "overlay": best["overlay"], "checks": _chk(best["checks"])}
+            "overlay": best["overlay"], "checks": _chk(best["checks"]), "sl": best["sl"]}
 
 
 def _mk_scan(name, fn):
@@ -1303,16 +1313,34 @@ def analyze(df: pd.DataFrame, spec: SymbolSpec, views: bool = True) -> dict:
         scores[sd] += vals[0] + 0.3 * sum(vals[1:])
         counts[sd] += 1
 
-    side = 1 if scores[1] >= scores[-1] else -1
-    win, lose = scores[side], scores[-side]
+    # --- تأكيد الاستراتيجيات الأساسية: إشارة مكتملة (signal) أو إعداد مؤكد بانتظار المنطقة (setup)
+    core = {1: [], -1: []}
+    core_sc = {1: {}, -1: {}}
+    for cname, cfn in SCANS.items():
+        if cname in DISABLED_STRATEGIES:
+            continue
+        try:
+            sc = cfn(x)
+        except Exception:
+            log.exception("core scan %s failed", cname)
+            continue
+        sg = sc.get("signal")
+        sd, mode = (sg.side, "signal") if sg else (int(sc.get("bias") or 0), "setup")
+        if sd in (1, -1) and (mode == "signal" or SETUP_COUNTS):
+            core[sd].append({"name": cname, "mode": mode})
+            core_sc[sd][cname] = sc
+    eff = {sd: scores[sd] + SETUP_BONUS * sum(1 for c in core[sd] if c["mode"] == "setup") for sd in (1, -1)}
+
+    side = 1 if eff[1] >= eff[-1] else -1
+    win, lose = eff[side], eff[-side]
     if htf == -side:
         win *= 0.75     # عقوبة للتداول ضد اتجاه الساعة
 
     res = {"bar": str(df.index[-1]), "atr": float(a.atr), "vol_ratio": round(vr, 2),
            "decision": "WAIT", "side": 0, "score": round(win, 2),
-           "long_score": round(scores[1], 2), "short_score": round(scores[-1], 2),
+           "long_score": round(eff[1], 2), "short_score": round(eff[-1], 2),
            "regime": regime, "adx": round(adx_v, 1), "rsi": round(float(a.rsi), 1), "htf": htf,
-           "signals": signals}
+           "signals": signals, "core": {"needed": CORE_CONFIRM, "buy": core[1], "sell": core[-1]}}
     if views:
         vs = build_views(x, found, regime)
         res["views"] = vs
@@ -1333,29 +1361,80 @@ def analyze(df: pd.DataFrame, spec: SymbolSpec, views: bool = True) -> dict:
     if win < STRICT_SCORE and htf != side:
         res["note"] = "إشارة حدّية: تحتاج توافق اتجاه الساعة (1H)"
         return res
-    if REQUIRE_CORE and not any(s.side == side and s.name in SCANS for s in found):
-        res["note"] = "لا توجد موافقة من استراتيجية أساسية (ICT / SMC / إليوت / التحليل الفني)"
+    n_core, n_opp = len(core[side]), len(core[-side])
+    n_sig = sum(1 for c in core[side] if c["mode"] == "signal")
+    if n_core < CORE_CONFIRM or n_core <= n_opp:
+        res["note"] = (f"تأكيد الاستراتيجيات الأساسية غير كافٍ: {n_core} من {CORE_CONFIRM} مطلوبة"
+                       + (f" (والمعاكسة {n_opp})" if n_opp else ""))
+        return res
+    if n_sig < CORE_MIN_SIGNALS:
+        res["note"] = f"التأكيد الأساسي إعدادات فقط ({n_core}) — بانتظار إشارة مكتملة من إحداها"
         return res
 
-    # وقف هيكلي: يُفضَّل وقف الاستراتيجيات الأساسية (نقطة إبطال الفكرة)، وإلا وسيط كل الاستراتيجيات (+0.1 ATR)، محصور بين 1 و3 ATR
+    # ---- الوقف: نقطة إبطال الفكرة للاستراتيجيات الأساسية المؤكِّدة (الوسيط)، خلف آخر قمة/قاع قريب، + هامش (سبريد/ATR)
     entry, atr_v = float(a.Close), float(a.atr)
-
-    def _hints(core_only: bool):
-        return [(entry - s.sl) * side + 0.1 * atr_v for s in found
-                if s.side == side and s.sl is not None and (entry - s.sl) * side > 0
-                and (not core_only or s.name in SCANS)]
-
-    hints = _hints(True) or _hints(False)
+    buf = max(0.15 * atr_v, spec.spread_pips * spec.pip)
+    hints = []
+    for sc in core_sc[side].values():
+        slp = sc.get("sl")
+        if slp is not None and slp == slp and (entry - slp) * side > 0:
+            hints.append((entry - slp) * side + buf)
+    if not hints:
+        hints = [(entry - s.sl) * side + buf for s in found
+                 if s.side == side and s.sl is not None and (entry - s.sl) * side > 0]
+    lo_c, hi_c = MIN_SL_ATR * atr_v, MAX_SL_ATR * atr_v
     if hints:
-        sl_dist, src = float(np.clip(np.median(hints), 1.0 * atr_v, 3.0 * atr_v)), "structure"
+        raw, src = float(np.median(hints)), "structure"
     else:
-        sl_dist, src = ATR_SL_MULT * atr_v, "atr"
+        raw, src = ATR_SL_MULT * atr_v, "atr"
+    rc = x.iloc[-6:]
+    adverse = (entry - float(rc["Low"].min())) if side == 1 else (float(rc["High"].max()) - entry)
+    sl_dist = float(np.clip(max(raw, adverse + buf), lo_c, hi_c))
+    res["sl_capped"] = bool(raw > hi_c)
+
+    # ---- التكلفة: إن كانت كبيرة نسبةً للوقف نوسّع الوقف (الحجم ينقص تلقائياً والمخاطرة ثابتة) وإلا نرفض
     cost = trade_cost(spec, entry)
+    need = cost / MAX_COST_RATIO if MAX_COST_RATIO > 0 else 0.0
+    if sl_dist < need:
+        if need <= hi_c:
+            sl_dist, src = need, src + "+cost"
+        else:
+            res.update({"sl_dist": sl_dist, "sl_source": src, "cost": cost})
+            res["note"] = f"التكلفة (سبريد/عمولة) مرتفعة نسبةً للوقف: تحتاج وقفاً ≥ {need:.{spec.decimals}f}"
+            return res
     res.update({"sl_dist": sl_dist, "sl_source": src, "cost": cost})
-    if cost > MAX_COST_RATIO * sl_dist:
-        res["note"] = "التكلفة (سبريد/عمولة) مرتفعة نسبةً للوقف"
-        return res
+
+    # ---- الأهداف: TP1=1R (تعادل) • TP2=الهدف الرئيسي (R:R) • TP3=امتداد • + هدف إليوت إن وُجد
+    rr = RISK_REWARD
+    tp_dist = rr * sl_dist
+    targets = [{"label": "TP1", "r": 1.0}, {"label": "TP2", "r": round(rr, 2)},
+               {"label": "TP3", "r": round(max(3.0, rr + 1.0), 2)}]
+    ell = core_sc[side].get("elliott")
+    if ell and ell.get("tgt") is not None:
+        er = (float(ell["tgt"]) - entry) * side / sl_dist
+        if er >= 1.2:
+            res["elliott_target"] = {"price": float(ell["tgt"]), "r": round(er, 2)}
+            targets.append({"label": "إليوت", "r": round(er, 2)})
+    targets.sort(key=lambda t: t["r"])
+    for t in targets:
+        t["price"] = entry + side * sl_dist * t["r"]
+    res["targets"] = targets
+    res["sl_price"] = entry - side * sl_dist
+    res["tp_price"] = entry + side * tp_dist
+    res["rr_net"] = round((tp_dist - cost) / (sl_dist + cost), 2)
+    try:
+        sup, rsl = swing_levels(x)
+        lv = [v for v in (sup if side == -1 else rsl) if (v - entry) * side > 0.3 * atr_v]
+        if lv:
+            nv = min(lv, key=lambda v: abs(v - entry))
+            if abs(nv - entry) < tp_dist:
+                res["obstacle"] = {"price": float(nv), "r": round(abs(nv - entry) / sl_dist, 2)}
+    except Exception:
+        pass
+
     zs = [s.zone for s in found if s.side == side and s.zone]
+    if not zs:
+        zs = [sc["zone"] for sc in core_sc[side].values() if sc.get("zone")]
     if zs:
         ez = {"top": zs[0][0], "bottom": zs[0][1]}
     else:
@@ -1431,6 +1510,7 @@ class Trade:
     risk_usd: float = 0.0
     margin_usd: float = 0.0
     sl_source: str = "atr"
+    targets: list = field(default_factory=list)
 
     @classmethod
     def open(cls, symbol, side, entry, sl_dist, rr, strategies, score, opened_at,
@@ -1815,6 +1895,7 @@ class MarketEngine:
                        usd_factor=sz["lots"] * self.spec.units_per_lot * quote_to_usd(self.spec, price),
                        risk_usd=sz["risk_usd"], margin_usd=sz["margin_usd"], sl_source=a["sl_source"])
         t.checked_until = str(self.df.index[-1])
+        t.targets = [dict(x) for x in a.get("targets", [])]
         self.trade = t
         self.stats["opened"] += 1
         await notify(self._signal_message(t, a))
@@ -1842,16 +1923,24 @@ class MarketEngine:
         icon, word = ("🟢", "شراء") if t.side == 1 else ("🔴", "بيع")
         htf = {1: "صاعد", -1: "هابط", 0: "محايد"}[a["htf"]]
         reasons = "\n".join(f"• {html.escape(s['reason'])}" for s in a["signals"] if s["side"] == t.side)
-        src = "هيكلي" if t.sl_source == "structure" else "ATR"
+        src = {"structure": "هيكلي", "atr": "ATR"}.get(t.sl_source.split("+")[0], "ATR") + (" + توسعة للتكلفة" if "+cost" in t.sl_source else "")
+        nm = {"ict": "ICT", "smc": "SMC", "elliott": "إليوت", "technical": "فني"}
+        key = "buy" if t.side == 1 else "sell"
+        core = " • ".join(f"{nm.get(c['name'], c['name'])}{'⚡' if c['mode'] == 'signal' else '◔'}" for c in a["core"][key])
         z = a.get("entry_zone")
         ez = f"منطقة الدخول: <code>{fmt(z['bottom'], sp)} – {fmt(z['top'], sp)}</code>\n" if z else ""
+        tps = "\n".join(f"🎯 {x['label']}: <code>{fmt(x['price'], sp)}</code> ({x['r']:g}R)"
+                        + (" — حرّك الوقف للتعادل" if x["label"] == "TP1" else "") for x in a.get("targets", []))
+        ob = a.get("obstacle")
+        obs = f"\n⚠️ مستوى قريب قبل الهدف: <code>{fmt(ob['price'], sp)}</code> ({ob['r']}R)" if ob else ""
         return (f"{icon} <b>{word} {self.symbol}</b>\n"
                 f"الدخول: <code>{fmt(t.entry, sp)}</code>\n{ez}"
-                f"الوقف: <code>{fmt(t.sl, sp)}</code> ({src})\n"
-                f"الهدف: <code>{fmt(t.tp, sp)}</code>  (R:R 1:{RISK_REWARD:g})\n"
+                f"⛔ الوقف: <code>{fmt(t.sl, sp)}</code> ({src}، مسافة {fmt(t.risk, sp)})\n{tps}{obs}\n"
+                f"صافي R:R بعد التكلفة: <b>{a.get('rr_net', '—')}</b>\n"
                 f"الحجم: <b>{size_label(self.symbol, sp, t.lots)}</b> | المخاطرة: ${t.risk_usd} "
                 f"({t.risk_usd / account.balance * 100:.1f}%) | الهامش: ${t.margin_usd}\n"
-                f"النقاط: {a['score']} | السوق: {a['regime']} (ADX {a['adx']}) | 1H: {htf}\n\n{reasons}\n\n"
+                f"النقاط: {a['score']} | السوق: {a['regime']} (ADX {a['adx']}) | 1H: {htf}\n"
+                f"🧩 تأكيد أساسي: {core}\n\n{reasons}\n\n"
                 f"<i>عند +1R حرّك الوقف للدخول، وبعد +1.5R تابع الوقف المتحرك.</i>")
 
     def _close_message(self, t: Trade) -> str:
@@ -2038,7 +2127,7 @@ async def lifespan(app: FastAPI):
     await state.http.aclose()
 
 
-app = FastAPI(title="Zero Reversal Engine", version="48.1", lifespan=lifespan)
+app = FastAPI(title="Zero Reversal Engine", version="48.2", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -2097,7 +2186,8 @@ async def api_why():
     recipients = len(telegram.subs | ADMIN_CHAT_IDS)
     return {"telegram_enabled": telegram.enabled, "telegram_recipients": recipients,
             "telegram_hint": None if recipients else "لا يوجد مستلم: أرسل /start للبوت أو اضبط ADMIN_CHAT_IDS",
-            "thresholds": {"min_score": MIN_SCORE, "min_strategies": MIN_STRATEGIES},
+            "thresholds": {"min_score": MIN_SCORE, "min_strategies": MIN_STRATEGIES, "core_confirm": CORE_CONFIRM, "core_min_signals": CORE_MIN_SIGNALS,
+                           "setup_counts": SETUP_COUNTS, "max_cost_ratio": MAX_COST_RATIO},
             "symbols": [why_no_trade(e) for e in engines.values()]}
 
 
@@ -2105,10 +2195,12 @@ async def api_why():
 async def api_strategies():
     return {
         "params": {"min_score": MIN_SCORE, "strict_score": STRICT_SCORE, "min_strategies": MIN_STRATEGIES, "risk_reward": RISK_REWARD,
-                   "atr_sl_mult_fallback": ATR_SL_MULT, "max_cost_ratio": MAX_COST_RATIO},
+                   "atr_sl_mult_fallback": ATR_SL_MULT, "max_cost_ratio": MAX_COST_RATIO, "core_confirm": CORE_CONFIRM,
+                   "setup_counts": SETUP_COUNTS, "min_sl_atr": MIN_SL_ATR, "max_sl_atr": MAX_SL_ATR},
         "filters": ["نظام السوق ADX: ≥25 اتجاه، ≤18 عرضي", "اتجاه 1H (EMA20/50): عقوبة 25% عند المعاكسة",
                     "تقلب ATR/وسيطه: رفض فوق 3× أو تحت 0.4×", "تجنب 21:00-24:00 UTC لغير الكريبتو",
-                    "رفض إذا السبريد+العمولة > 20% من الوقف", "صفقة واحدة لكل مجموعة مرتبطة"],
+                    f"السبريد+العمولة ≤ {MAX_COST_RATIO * 100:.0f}% من الوقف (يُوسَّع الوقف تلقائياً حتى {MAX_SL_ATR:g} ATR وإلا رُفضت)",
+                    f"الدخول يتطلب تأكيد {CORE_CONFIRM} استراتيجيات أساسية أو أكثر (⚡ إشارة مكتملة / ◔ إعداد مؤكد)", "صفقة واحدة لكل مجموعة مرتبطة"],
         "strategies": [{"name": n, "weight": w, "kind": k, "enabled": n not in DISABLED_STRATEGIES,
                         **STRATEGY_INFO.get(n, {})} for n, _, w, k in STRATEGIES],
     }
@@ -2207,11 +2299,13 @@ async def api_candles(symbol: str, limit: int = Query(400, ge=50, le=1000)):
     a = e.analysis or {}
     plan, tr = None, e.trade
     if tr:
-        plan = {"kind": "open", "side": tr.side, "entry": tr.entry, "sl": tr.sl, "tp": tr.tp}
+        tl = [{"label": t["label"], "r": t["r"], "price": tr.entry + tr.side * tr.risk * t["r"]} for t in (tr.targets or [])]
+        plan = {"kind": "open", "side": tr.side, "entry": tr.entry, "sl": tr.sl, "tp": tr.tp, "targets": tl, "rr_net": None}
     elif a.get("decision") in ("BUY", "SELL") and a.get("sl_dist") and e.price:
         s = a["side"]
+        tl = [{"label": t["label"], "r": t["r"], "price": e.price + s * a["sl_dist"] * t["r"]} for t in a.get("targets", [])]
         plan = {"kind": "signal", "side": s, "entry": e.price, "sl": e.price - s * a["sl_dist"],
-                "tp": e.price + s * a["sl_dist"] * RISK_REWARD}
+                "tp": e.price + s * a["sl_dist"] * RISK_REWARD, "targets": tl, "rr_net": a.get("rr_net")}
     info = {n: {"title": i.get("title", n), "entry": i.get("entry", []), "stop": i.get("stop", "")}
             for n, i in STRATEGY_INFO.items()}
     return {"symbol": e.symbol, "decimals": e.spec.decimals, "candles": candles,
@@ -2227,9 +2321,12 @@ CHART_PAGE = """<!doctype html><html lang="ar" dir="rtl"><head><meta charset="ut
 body{margin:0;background:var(--bg);color:var(--fg);font:14px system-ui,sans-serif}
 header{display:flex;gap:10px;align-items:center;padding:10px 12px;flex-wrap:wrap}a{color:inherit}.m{color:var(--mut)}
 .logo{font-weight:800;background:linear-gradient(90deg,#6366f1,#22d3ee);-webkit-background-clip:text;background-clip:text;color:transparent}
-#box{height:50vh;min-height:300px;direction:ltr;position:relative}canvas{display:block}
+#box{height:56vh;min-height:320px;direction:ltr;position:relative;touch-action:none;user-select:none;-webkit-user-select:none}
+canvas{display:block;touch-action:none;cursor:grab}canvas:active{cursor:grabbing}
 .lg{padding:2px 12px 6px;font-size:12px;display:flex;gap:12px;flex-wrap:wrap}.lg i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-inline-end:4px}
-.bt{display:flex;gap:8px;padding:0 12px 8px;flex-wrap:wrap}.bt button{background:var(--card);color:var(--fg);border:1px solid var(--bd);border-radius:8px;padding:6px 12px}
+.bt{display:flex;gap:8px;padding:0 12px 6px;flex-wrap:wrap}.bt button{background:var(--card);color:var(--fg);border:1px solid var(--bd);border-radius:8px;padding:6px 12px;font-size:14px}
+.bt button.on{border-color:var(--acc);outline:1px solid var(--acc)}
+.tip{padding:0 12px 8px;font-size:12px;color:var(--mut)}
 #v{padding:0 12px 12px}.sum,.sel{background:var(--card);border-radius:12px;padding:10px;margin-bottom:10px;line-height:1.7}
 .sel{border:1px solid var(--acc)}.sel ul{margin:6px 0 0;padding-inline-start:18px}.sel li{margin:2px 0;list-style:none;margin-inline-start:-18px}
 h4{margin:14px 0 4px;color:var(--acc)}.r{border-bottom:1px solid var(--bd);padding:9px 6px;cursor:pointer;border-radius:8px}
@@ -2239,26 +2336,34 @@ footer{text-align:center;padding:18px 0 28px;color:var(--mut);font-size:13px}foo
 <header><a href="/">← الرئيسية</a><span class="logo">Zero Reversal</span><b>__SYM__</b><span id="i" class="m"></span></header>
 <div id="box"><canvas id="cv"></canvas></div>
 <div class="lg m"><span><i style="background:#3b82f6"></i>EMA20</span><span><i style="background:#f59e0b"></i>EMA50</span><span><i style="background:#a855f7"></i>EMA200</span></div>
-<div class="bt"><button onclick="N=100;draw()">100</button><button onclick="N=200;draw()">200</button><button onclick="N=400;draw()">400</button><button onclick="N=600;draw()">600</button><button onclick="pick(null)">إلغاء التحديد</button></div>
+<div class="bt"><button onclick="zoom(0.7)">＋</button><button onclick="zoom(1/0.7)">－</button>
+<button onclick="setN(100)">100</button><button onclick="setN(200)">200</button><button onclick="setN(400)">400</button><button onclick="setN(600)">600</button>
+<button onclick="goLive()">⏭ الآن</button><button onclick="resetView()">↺ ضبط</button><button onclick="pick(null)">إلغاء التحديد</button></div>
+<div class="tip">اسحب لتحريك الشارت (يمين/يسار/أعلى/أسفل) • إصبعان للتكبير • اسحب محور السعر لتكبير الارتفاع • نقرتان لإعادة الضبط</div>
 <div id="v"></div>
 <footer>Developed by <b>aziz</b></footer>
 <script>
-const SYM='__SYM__';let DATA=null,AN=null,MO=true,N=200,SEL=null;
+const SYM='__SYM__';let DATA=null,AN=null,MO=true,N=200,OFF=0,YO=0,YS=1,PPP=1,SEL=null,raf=0;
 const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const selView=()=>AN&&AN.views&&SEL?AN.views.find(v=>v.name===SEL):null;
+const sched=()=>{if(!raf)raf=requestAnimationFrame(()=>{raf=0;draw()})};
 function draw(){
  const d=DATA;if(!d||!d.candles.length)return;
+ const A=d.candles,tot=A.length;
+ N=Math.max(20,Math.min(Math.round(N),tot));OFF=Math.max(0,Math.min(OFF,tot-N));
  const cv=document.getElementById('cv'),box=document.getElementById('box'),dpr=window.devicePixelRatio||1;
  const W=box.clientWidth,H=box.clientHeight;
  cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';
  const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,W,H);
  const fg=css('--fg'),mut=css('--mut'),bd=css('--bd'),bg=css('--bg');
- const C=d.candles.slice(-N),padR=66,padB=20,padT=8,pw=W-padR,ph=H-padB-padT;
+ const end=tot-Math.round(OFF),C=A.slice(end-N,end),padR=66,padB=20,padT=8,pw=W-padR,ph=H-padB-padT;
  let hi=-Infinity,lo=Infinity;C.forEach(c=>{hi=Math.max(hi,c.high);lo=Math.min(lo,c.low)});
- const T=d.trade;if(T){[T.entry,T.sl,T.tp].forEach(v=>{hi=Math.max(hi,v);lo=Math.min(lo,v)})}
+ const PL=d.plan;
+ if(PL&&OFF<5){[PL.entry,PL.sl,PL.tp].forEach(v=>{if(v!=null){hi=Math.max(hi,v);lo=Math.min(lo,v)}})}
  const pad=(hi-lo)*0.06||1;hi+=pad;lo-=pad;
+ const mid=(hi+lo)/2,half=(hi-lo)/2*YS;hi=mid+half+YO;lo=mid-half+YO;PPP=(hi-lo)/ph;
  const y=v=>padT+(hi-v)/(hi-lo)*ph,step=pw/C.length,x=i=>step*(i+0.5);
- const xt=t=>{let i=C.findIndex(c=>c.time>=t);if(i<0)i=C.length-1;return x(i)};
+ const xt=t=>{if(t>C[C.length-1].time)return null;const i=C.findIndex(c=>c.time>=t);return i<0?null:x(i)};
  const clipY=v=>Math.max(padT,Math.min(padT+ph,y(v)));
  g.font='11px system-ui';
  for(let k=0;k<=5;k++){const v=lo+(hi-lo)*k/5,yy=y(v);g.strokeStyle=bd;g.lineWidth=1;g.beginPath();g.moveTo(0,yy);g.lineTo(pw,yy);g.stroke();
@@ -2267,12 +2372,15 @@ function draw(){
  for(let k=0;k<4;k++){const i=Math.floor((C.length-1)*(k+0.5)/4);g.fillStyle=mut;
   g.fillText(new Date(C[i].time*1000).toISOString().slice(5,16).replace('T',' '),x(i),H-5);}
  const zc=s=>s==1?'22,163,74':s==-1?'220,38,38':'99,102,241';
- const box2=(t0,top,bot,s,label,a)=>{const x0=Math.max(0,xt(t0)-step/2),y1=clipY(top),y2=clipY(bot);if(Math.abs(y2-y1)<1)return;
+ const box2=(t0,top,bot,s,label,a)=>{const xx=xt(t0);if(xx===null)return;const x0=Math.max(0,xx-step/2),y1=clipY(top),y2=clipY(bot);if(Math.abs(y2-y1)<1)return;
   g.fillStyle='rgba('+zc(s)+','+a+')';g.fillRect(x0,y1,pw-x0,y2-y1);g.strokeStyle='rgba('+zc(s)+',0.9)';g.lineWidth=1;g.strokeRect(x0,y1,pw-x0,y2-y1);
   if(label){g.fillStyle='rgb('+zc(s)+')';g.textAlign='left';g.textBaseline='top';g.fillText(label,x0+4,Math.min(y1,y2)+3)}};
  const ov=selView()&&selView().overlay;
- if(AN&&AN.entry_zone&&!T){const L0=C[Math.max(0,C.length-30)].time;box2(L0,AN.entry_zone.top,AN.entry_zone.bottom,AN.entry_zone.side,'منطقة الدخول',0.22)}
- if(T){const t0=Date.parse(T.opened_at+'Z')/1000;box2(t0,T.tp,T.entry,1,'',0.10);box2(t0,T.entry,T.sl,-1,'',0.10)}
+ const tps=PL?(PL.targets&&PL.targets.length?PL.targets:[{label:'TP',price:PL.tp}]):[];
+ if(AN&&AN.entry_zone&&!PL){const L0=C[Math.max(0,C.length-30)].time;box2(L0,AN.entry_zone.top,AN.entry_zone.bottom,AN.entry_zone.side,'منطقة الدخول',0.22)}
+ if(PL){const t0=d.trade?Date.parse(d.trade.opened_at+'Z')/1000:C[Math.max(0,C.length-30)].time;
+  const far=tps.reduce((m,t)=>Math.abs(t.price-PL.entry)>Math.abs(m.price-PL.entry)?t:m,tps[0]);
+  box2(t0,far.price,PL.entry,1,'',0.08);box2(t0,PL.entry,PL.sl,-1,'',0.10)}
  if(ov)(ov.zones||[]).forEach(z=>box2(z.t0,z.top,z.bottom,z.side,z.label,0.16));
  const lineOf=(arr,col,w)=>{const m=new Map(arr.map(p=>[p.time,p.value]));g.strokeStyle=col;g.lineWidth=w;g.beginPath();let st=false;
   C.forEach((c,i)=>{const v=m.get(c.time);if(v===undefined){st=false;return}if(!st){g.moveTo(x(i),y(v));st=true}else g.lineTo(x(i),y(v))});g.stroke()};
@@ -2281,18 +2389,49 @@ function draw(){
  C.forEach((c,i)=>{const col=c.close>=c.open?'#16a34a':'#dc2626';g.strokeStyle=col;g.fillStyle=col;g.lineWidth=1;
   g.beginPath();g.moveTo(x(i),y(c.high));g.lineTo(x(i),y(c.low));g.stroke();
   g.fillRect(x(i)-bw/2,y(Math.max(c.open,c.close)),bw,Math.max(1,Math.abs(y(c.open)-y(c.close))))});
- if(ov){(ov.lines||[]).forEach(l=>{if(l.price>hi||l.price<lo)return;const x0=Math.max(0,xt(l.t0));g.strokeStyle='#f59e0b';g.lineWidth=1.4;g.setLineDash([5,4]);
+ if(ov){(ov.lines||[]).forEach(l=>{if(l.price>hi||l.price<lo)return;const xx=xt(l.t0);if(xx===null)return;const x0=Math.max(0,xx);g.strokeStyle='#f59e0b';g.lineWidth=1.4;g.setLineDash([5,4]);
    g.beginPath();g.moveTo(x0,y(l.price));g.lineTo(pw,y(l.price));g.stroke();g.setLineDash([]);
    g.fillStyle='#f59e0b';g.textAlign='left';g.textBaseline='bottom';g.fillText(l.label,x0+4,y(l.price)-2)});
-  (ov.points||[]).forEach(p=>{if(p.price>hi||p.price<lo)return;const px_=xt(p.time),py=y(p.price);g.fillStyle='#22d3ee';g.beginPath();g.arc(px_,py,4,0,7);g.fill();
+  (ov.points||[]).forEach(p=>{if(p.price>hi||p.price<lo||p.time<C[0].time)return;const px_=xt(p.time);if(px_===null)return;const py=y(p.price);g.fillStyle='#22d3ee';g.beginPath();g.arc(px_,py,4,0,7);g.fill();
    g.fillStyle=fg;g.textAlign='center';g.textBaseline='bottom';g.fillText(p.label,px_,py-6)})}
- if(T){[['دخول',T.entry,'#9ca3af'],['وقف',T.sl,'#dc2626'],['هدف',T.tp,'#16a34a']].forEach(([n,p,c])=>{
+ if(PL){const L=[['دخول',PL.entry,'#9ca3af'],['وقف',PL.sl,'#dc2626']].concat(tps.map(t=>[t.label,t.price,'#16a34a']));
+  L.forEach(([n,p,c])=>{if(p>hi||p<lo)return;
   g.strokeStyle=c;g.setLineDash([6,4]);g.lineWidth=1.5;g.beginPath();g.moveTo(0,y(p));g.lineTo(pw,y(p));g.stroke();g.setLineDash([]);
   g.fillStyle=c;g.textAlign='left';g.textBaseline='middle';g.fillText(n+' '+p.toFixed(d.decimals),4,y(p)-8)})}
- const last=C[C.length-1].close;g.fillStyle=fg;g.fillRect(pw,y(last)-8,padR,16);
- g.fillStyle=bg;g.textAlign='left';g.textBaseline='middle';g.fillText(last.toFixed(d.decimals),pw+4,y(last));
+ const last=A[tot-1].close;
+ if(last<=hi&&last>=lo){g.fillStyle=fg;g.fillRect(pw,y(last)-8,padR,16);
+  g.fillStyle=bg;g.textAlign='left';g.textBaseline='middle';g.fillText(last.toFixed(d.decimals),pw+4,y(last))}
+ if(OFF>=1){g.fillStyle=mut;g.textAlign='left';g.textBaseline='top';g.fillText('◀ '+Math.round(OFF)+' شمعة عن الآن',6,padT+2)}
 }
+/* ---------- التحكم بالشارت: سحب + تكبير بإصبعين/عجلة + محور السعر ---------- */
+function zoom(f){N=N*f;sched()}
+function setN(v){N=v;sched()}
+function goLive(){OFF=0;YO=0;sched()}
+function resetView(){N=200;OFF=0;YO=0;YS=1;sched()}
+(function(){
+ const cv=document.getElementById('cv'),P=new Map();let last=null,pinch=null,axis=false,moved=0,tapT=0;
+ const pos=e=>{const r=cv.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top}};
+ cv.addEventListener('pointerdown',e=>{try{cv.setPointerCapture(e.pointerId)}catch(_){}
+  const p=pos(e);P.set(e.pointerId,p);moved=0;
+  if(P.size===1){axis=p.x>cv.clientWidth-66;last=p}
+  if(P.size===2){const[a,b]=[...P.values()];pinch={d:Math.hypot(a.x-b.x,a.y-b.y),N:N}}});
+ cv.addEventListener('pointermove',e=>{if(!P.has(e.pointerId))return;const p=pos(e);P.set(e.pointerId,p);
+  if(P.size===2&&pinch){const[a,b]=[...P.values()];const dd=Math.max(Math.hypot(a.x-b.x,a.y-b.y),1);N=pinch.N*pinch.d/dd;sched();return}
+  if(P.size===1&&last){const dx=p.x-last.x,dy=p.y-last.y;last=p;moved+=Math.abs(dx)+Math.abs(dy);
+   if(axis){YS=Math.max(0.15,Math.min(8,YS*Math.exp(dy/160)))}
+   else{const step=(cv.clientWidth-66)/N;OFF+=dx/step;YO+=dy*PPP}
+   sched()}});
+ const up=e=>{P.delete(e.pointerId);if(P.size<2)pinch=null;
+  if(P.size===1)last=[...P.values()][0];
+  if(P.size===0){last=null;
+   if(moved<8){const t=Date.now();if(t-tapT<320){resetView();tapT=0}else tapT=t}}};
+ cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);
+ cv.addEventListener('wheel',e=>{e.preventDefault();
+  if(e.shiftKey){OFF+=e.deltaY>0?-8:8}else{N=N*(e.deltaY>0?1.12:0.89)}sched()},{passive:false});
+})();
 const ic=b=>b==1?'🟢':b==-1?'🔴':'⚪';
+const NM={ict:'ICT',smc:'SMC',elliott:'إليوت',technical:'فني'};
+const cl=arr=>(arr||[]).map(c=>(NM[c.name]||c.name)+(c.mode==='signal'?'⚡':'◔')).join(' · ')||'—';
 function row(v){return '<div class="r'+(v.name===SEL?' on':'')+'" data-n="'+v.name+'" onclick="pick(this.dataset.n)"><div>'+ic(v.bias)+' <b>'+v.title+'</b> '+(v.signal?'<span class="tag">إشارة</span>':'')+'</div><div class="m">'+v.text+'</div></div>'}
 function views(){
  const el=document.getElementById('v'),a=AN;
@@ -2300,8 +2439,16 @@ function views(){
  const bc=a.bias_counts||{};
  const dec={BUY:'شراء 🟢',SELL:'بيع 🔴',WAIT:'انتظار ⚪'}[a.decision]||a.decision;
  const htf={'1':'صاعد','-1':'هابط','0':'محايد'}[String(a.htf)];
- let h='<div class="sum"><b>القرار: '+dec+'</b> | النقاط '+a.score+' (شراء '+a.long_score+' / بيع '+a.short_score+')<br>السوق: '+a.regime+' (ADX '+a.adx+') | اتجاه 1H: '+htf+'<br>آراء الاستراتيجيات: 🟢 '+bc.bull+' صاعد • 🔴 '+bc.bear+' هابط • ⚪ '+bc.neutral+' محايد'+
-  (a.entry_zone?'<br>🎯 منطقة الدخول: '+a.entry_zone.bottom.toFixed(DATA.decimals)+' – '+a.entry_zone.top.toFixed(DATA.decimals):'')+
+ const f=v=>Number(v).toFixed(DATA.decimals),PL=DATA&&DATA.plan;
+ let pl='';
+ if(PL){pl='<br>📌 '+(PL.kind==='open'?'صفقة مفتوحة':'خطة الإشارة')+': دخول '+f(PL.entry)+' | ⛔ وقف '+f(PL.sl)+
+   (PL.targets&&PL.targets.length?'<br>🎯 '+PL.targets.map(t=>t.label+' '+f(t.price)+' ('+t.r+'R)').join(' • '):'')+
+   (PL.rr_net?'<br>صافي R:R بعد التكلفة: '+PL.rr_net:'')}
+ const cr=a.core?'<br>🧩 تأكيد أساسي (المطلوب '+a.core.needed+'): 🟢 '+cl(a.core.buy)+' | 🔴 '+cl(a.core.sell)+' <span class="m">(⚡ إشارة مكتملة • ◔ إعداد مؤكد)</span>':'';
+ let h='<div class="sum"><b>القرار: '+dec+'</b> | النقاط '+a.score+' (شراء '+a.long_score+' / بيع '+a.short_score+')<br>السوق: '+a.regime+' (ADX '+a.adx+') | اتجاه 1H: '+htf+'<br>آراء الاستراتيجيات: 🟢 '+bc.bull+' صاعد • 🔴 '+bc.bear+' هابط • ⚪ '+bc.neutral+' محايد'+cr+pl+
+  (a.entry_zone?'<br>🎯 منطقة الدخول: '+f(a.entry_zone.bottom)+' – '+f(a.entry_zone.top):'')+
+  (a.obstacle?'<br>⚠️ مستوى قريب قبل الهدف: '+f(a.obstacle.price)+' ('+a.obstacle.r+'R)':'')+
+  (a.sl_capped?'<br>ℹ️ الإبطال الهيكلي أبعد من الحد الأقصى للوقف فتم تقييد الوقف':'')+
   (a.note?'<br>⚠️ '+a.note:'')+(a.skipped?'<br>⛔ لم تُنفَّذ: '+a.skipped:'')+'</div>';
  const sv=selView();
  if(sv){const emp=!sv.overlay||(!(sv.overlay.zones||[]).length&&!(sv.overlay.lines||[]).length&&!(sv.overlay.points||[]).length);
@@ -2312,19 +2459,21 @@ function views(){
  h+='<h4>الاستراتيجيات الداعمة</h4>'+a.views.filter(v=>!v.core).map(row).join('');
  el.innerHTML=h;
 }
-function pick(n){SEL=(n===null||SEL===n)?null:n;views();draw();if(SEL)window.scrollTo({top:0,behavior:'smooth'})}
+function pick(n){SEL=(n===null||SEL===n)?null:n;views();sched();if(SEL)window.scrollTo({top:0,behavior:'smooth'})}
 async function load(){
  const inf=document.getElementById('i');
  try{
-  const r=await fetch('/api/candles/'+SYM+'?limit=600');
+  const r=await fetch('/api/candles/'+SYM+'?limit=1000');
   if(!r.ok){inf.textContent='لا توجد بيانات بعد ('+r.status+') — تحقق من /api/status';return}
+  const prevT=DATA&&DATA.candles.length?DATA.candles[DATA.candles.length-1].time:0;
   DATA=await r.json();
+  if(OFF>=1&&prevT){OFF+=DATA.candles.filter(c=>c.time>prevT).length}   /* لا يقفز الشارت عند وصول شمعة جديدة */
   inf.textContent=(DATA.trade?(DATA.trade.side==1?'صفقة شراء مفتوحة':'صفقة بيع مفتوحة'):'لا توجد صفقة');
   const s=await (await fetch('/api/analyze/'+SYM)).json();AN=s.analysis;MO=s.market_open;
   views();draw();
  }catch(e){inf.textContent='خطأ: '+e}
 }
-addEventListener('resize',draw);load();setInterval(load,30000);
+addEventListener('resize',sched);load();setInterval(load,30000);
 </script></body></html>"""
 
 
