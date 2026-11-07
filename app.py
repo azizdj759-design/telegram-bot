@@ -493,7 +493,7 @@ def strat_session_breakout(x):
     return None
 
 
-# ============================== الاستراتيجيات الأساسية الأربع ==============================
+# ============================== الاستراتيجيات الأساسية الأربع (نسخة مصحّحة) ==============================
 # كل استراتيجية تُكتب مرة للشراء وتُعكس للبيع بقلب الأسعار (side=-1)، فتبقى القواعد متناظرة تماماً.
 def _ov():
     return {"zones": [], "lines": [], "points": []}
@@ -523,11 +523,26 @@ def _chk(lst):
     return [{"ok": bool(o), "text": t} for o, t in lst]
 
 
+class _ScanCache(dict):
+    """pandas ينسخ x.attrs (deepcopy) عند كل x["High"] / x.iloc[-1]؛ هذا الكاش يُرجع نفسه بدل النسخ
+    حتى لا يتكرر نسخ النتائج مئات المرات في كل تحليل (وفي الباك تست)."""
+    def __deepcopy__(self, memo):
+        return self
+
+    def __copy__(self):
+        return self
+
+
 def _memo(x, key, fn):
-    cache = x.attrs.setdefault("scans", {})
-    if key not in cache:
-        cache[key] = fn(x)
-    return cache[key]
+    cache = x.attrs.get("scans")
+    if cache is None:
+        cache = x.attrs["scans"] = _ScanCache()
+    ck = (key, len(x), x.index[-1])        # المفتاح يشمل طول البيانات وآخر شمعة: لا تسرّب بين شرائح مختلفة
+    if ck not in cache:
+        if len(cache) > 64:
+            cache.clear()
+        cache[ck] = fn(x)
+    return cache[ck]
 
 
 def _arrays(x, side):
@@ -555,8 +570,7 @@ def _zigzag(hh, ll, w, lookback):
 def _ict_dir(x, side, in_kz):
     n = len(x)
     hh, ll, cc, oo = _arrays(x, side)
-    a = x.iloc[-1]
-    atr_ = float(a.atr)
+    atr_ = float(x["atr"].iloc[-1])
     P = lambda v: float(v) * side
     ov, chk = _ov(), []
     pl = pivots(ll, 3, "L", n - 90, n - 4)
@@ -564,13 +578,16 @@ def _ict_dir(x, side, in_kz):
     s = q = None
     for si in range(n - 3, max(n - 16, 10), -1):          # أحدث سحب سيولة أولاً
         for qi in reversed(pl):
-            if qi < si - 3 and ll[si] < ll[qi] and cc[si] > ll[qi]:
+            # الذيل يخترق القاع بمقدار ملموس (≥ 0.1 ATR) والإغلاق يعود فوقه
+            if qi < si - 3 and ll[si] < ll[qi] - 0.1 * atr_ and cc[si] > ll[qi]:
                 s, q = si, qi
                 break
         if s is not None:
             break
+    if s is not None and ll[s:].min() < ll[s]:             # قاع السحب انكسر لاحقاً: الإعداد باطل
+        s = q = None
     chk.append((s is not None, "سحب سيولة: كسر قاع سابق ثم إغلاق فوقه" if side == 1 else "سحب سيولة: كسر قمة سابقة ثم إغلاق تحتها"))
-    jj = lvl = fvg = None
+    jj = fvg = None
     zt = zb = None
     disp = fresh = disc = inz = legok = False
     if s is not None:
@@ -580,11 +597,12 @@ def _ict_dir(x, side, in_kz):
         if prev:
             lvl = hh[prev[-1]]
             ov["lines"].append(_ln(x, prev[-1], P(lvl), "MSS"))
-            jj = next((j for j in range(s + 1, n) if cc[j] > lvl), None)
+            # الكسر يجب أن يحدث قبل شمعة التأكيد الحالية
+            jj = next((j for j in range(s + 1, n - 1) if cc[j] > lvl), None)
     chk.append((jj is not None, "كسر هيكل السوق (MSS) بعد السحب"))
     if jj is not None:
         disp = any(cc[k] - oo[k] >= 0.8 * atr_ for k in range(s, jj + 1))
-        hi_, lo_ = hh[s:].max(), ll[s]
+        hi_, lo_ = hh[s:n - 1].max(), ll[s]               # قمة الموجة بدون شمعة التأكيد الحالية
         leg = hi_ - lo_
         legok = leg >= 1.5 * atr_
         zt, zb = hi_ - 0.62 * leg, hi_ - 0.79 * leg
@@ -738,7 +756,7 @@ def _ell_dir(x, side):
     chk = [(pat is not None, "عدّ صالح: موجات 1-2 (أو 1-4) تحقق قواعد إليوت الثلاث")]
     trigger = False
     sl = tgt = r = None
-    label = ""
+    label = kind_ = ""
     word = "صاعدة" if side == 1 else "هابطة"
     if pat:
         kind_, pts, r = pat
@@ -810,7 +828,7 @@ def _tech_dir(x, side):
             retest = bool(ll[-1] <= lvl + 0.5 * atr_ and cc[-1] > lvl and cc[-1] > oo[-1])
             ov["lines"].append(_ln(x, cand, P(lvl), "مستوى الكسر/إعادة الاختبار"))
             break
-    near_lv = [v for v in (sup if side == 1 else res) if (v - a.Close) * side <= 0]
+    near_lv = [v for v in lvls if (v - a.Close) * side <= 0]
     if near_lv:
         v = max(near_lv) if side == 1 else min(near_lv)
         ov["lines"].append(_ln(x, max(0, n - 120), v, "دعم" if side == 1 else "مقاومة"))
@@ -825,24 +843,32 @@ def _tech_dir(x, side):
     strength = 0.7 + (0.1 if (trig_a and retest) else 0) + (0.1 if a.adx >= 25 else 0)
     short = ["الاتجاه", "الزخم", "قوة ADX", "المحفز"]
     txt = "؛ ".join(f"{'✓' if o else '✗'} {nm}" for (o, _), nm in zip(chk, short)) + f" ({word})"
-    return {"side": side, "stage": sum(bool(o) for o, _ in chk), "trigger": ok, "overlay": ov, "checks": chk,
-            "sl": float(sl), "strength": strength, "text": txt, "pname": pname if trig_a else "كسر وإعادة اختبار"}
+    return {"side": side, "stage": sum(bool(o) for o, _ in chk), "trigger": ok, "trend": trend, "overlay": ov,
+            "checks": chk, "sl": float(sl), "strength": strength, "text": txt,
+            "pname": pname if trig_a else "كسر وإعادة اختبار"}
 
 
 def _scan_tech(x):
     rs = [_tech_dir(x, sd) for sd in (1, -1)]
-    best = max(rs, key=lambda d: (d["trigger"], d["stage"]))
+    # عند تساوي المراحل نفضّل الاتجاه الذي يوافق الترند (بدل تفضيل الشراء دائماً)
+    best = max(rs, key=lambda d: (d["trigger"], d["stage"], d["trend"]))
     sig = _sig("technical", best["side"], best["strength"],
                f"التحليل الفني: اتجاه + زخم + قوة + محفز ({best['pname']})", sl=best["sl"]) if best["trigger"] else None
     return {"bias": best["side"] if best["stage"] >= 3 else 0, "text": best["text"], "signal": sig,
             "overlay": best["overlay"], "checks": _chk(best["checks"])}
 
 
-SCANS = {"ict": _scan_ict, "smc": _scan_smc, "elliott": _scan_elliott, "technical": _scan_tech}
-strat_ict = lambda x: _memo(x, "ict", _scan_ict)["signal"]
-file_gen_content = _memo(x, "smc", _scan_smc)["signal"]
-strat_elliott = lambda x: _memo(x, "elliott", _scan_elliott)["signal"]
-strat_technical = lambda x: _memo(x, "technical", _scan_tech)["signal"]
+def _mk_scan(name, fn):
+    return lambda x: _memo(x, name, fn)
+
+
+# كل مسح يُحسب مرة واحدة لكل شمعة ثم يُعاد استخدامه (إشارات + آراء + رسومات)
+SCANS = {"ict": _mk_scan("ict", _scan_ict), "smc": _mk_scan("smc", _scan_smc),
+         "elliott": _mk_scan("elliott", _scan_elliott), "technical": _mk_scan("technical", _scan_tech)}
+strat_ict = lambda x: SCANS["ict"](x)["signal"]
+strat_smc = lambda x: SCANS["smc"](x)["signal"]
+strat_elliott = lambda x: SCANS["elliott"](x)["signal"]
+strat_technical = lambda x: SCANS["technical"](x)["signal"]
 
 
 # ------------------ رسومات الاستراتيجيات الداعمة (تظهر عند الضغط عليها) ------------------
@@ -902,7 +928,7 @@ OVERLAY_FNS = {"sr_candle": _ov_sr, "donchian": _ov_donchian, "session_breakout"
 # (الاسم، الدالة، الوزن، النوع)
 STRATEGIES: list[tuple[str, Callable, float, str]] = [
     ("ict", strat_ict, 1.8, "core"),
-    ("smc", file_gen_content, 1.8, "core"),
+    ("smc", strat_smc, 1.8, "core"),
     ("elliott", strat_elliott, 1.4, "core"),
     ("technical", strat_technical, 1.5, "core"),
     ("ema_pullback", strat_ema_pullback, 1.2, "trend"),
@@ -1150,8 +1176,8 @@ for _k, _fn in SCANS.items():
 STRATEGY_INFO.update({
     "ict": {
         "title": "ICT — سحب السيولة + MSS + OTE", "regime": "أساسية (أي نظام)",
-        "entry": ["سحب سيولة: شمعة (آخر 15) كسرت قاع سابق مؤكد وأغلقت فوقه (للبيع: قمة وأغلقت تحتها)",
-                  "MSS: إغلاق لاحق فوق آخر قمة مؤكدة قبل السحب، مع شمعة اندفاع جسمها ≥ 0.8 ATR",
+        "entry": ["سحب سيولة: شمعة (آخر 15) كسرت قاع سابق مؤكد (بمقدار ≥ 0.1 ATR) وأغلقت فوقه (للبيع: قمة وأغلقت تحتها)",
+                  "MSS: إغلاق لاحق فوق آخر قمة مؤكدة قبل السحب (قبل شمعة التأكيد)، مع شمعة اندفاع جسمها ≥ 0.8 ATR",
                   "موجة الاندفاع ≥ 1.5 ATR وعمرها ≤ 40 شمعة، ولم يُكسر قاع السحب",
                   "السعر في منطقة الخصم (النصف الأسفل لنطاق آخر 100 شمعة) للشراء، والعلاوة للبيع",
                   "شمعة تأكيد داخل OTE (61.8%-79% من الموجة) ويُرسم FVG إن وُجد",
@@ -1186,13 +1212,7 @@ STRATEGY_INFO.update({
 })
 
 
-# ---------- رسومات الاستراتيجيات القديمة على الشارت ----------
-def _o_ema(x):
-    a, n = x.iloc[-1], len(x)
-    side = 1 if a.ema20 > a.ema50 > a.ema200 else -1 if a.ema20 < a.ema50 < a.ema200 else 0
-    return _ov()
-
-
+# ---------- رسومات الاستراتيجيات على الشارت ----------
 OVERLAYS = {}
 for _k, _fn in SCANS.items():
     OVERLAYS[_k] = (lambda fn: (lambda x: fn(x)["overlay"]))(_fn)
@@ -1241,7 +1261,6 @@ def build_views(x, found, regime):
                     "text": text, "kind": kind, "core": name in SCANS, "weight": weight,
                     "regime_fit": regime_multiplier(regime, kind), "overlay": overlay, "checks": checks})
     return out
-
 
 
 def _wait(note: str, **extra) -> dict:
@@ -1318,12 +1337,17 @@ def analyze(df: pd.DataFrame, spec: SymbolSpec, views: bool = True) -> dict:
         res["note"] = "لا توجد موافقة من استراتيجية أساسية (ICT / SMC / إليوت / التحليل الفني)"
         return res
 
-    # وقف هيكلي: وسيط مسافات الوقف المقترحة (+0.1 ATR) محصور بين 1 و2.5 ATR
+    # وقف هيكلي: يُفضَّل وقف الاستراتيجيات الأساسية (نقطة إبطال الفكرة)، وإلا وسيط كل الاستراتيجيات (+0.1 ATR)، محصور بين 1 و3 ATR
     entry, atr_v = float(a.Close), float(a.atr)
-    hints = [(entry - s.sl) * side + 0.1 * atr_v for s in found if s.side == side and s.sl is not None
-             and (entry - s.sl) * side > 0]
+
+    def _hints(core_only: bool):
+        return [(entry - s.sl) * side + 0.1 * atr_v for s in found
+                if s.side == side and s.sl is not None and (entry - s.sl) * side > 0
+                and (not core_only or s.name in SCANS)]
+
+    hints = _hints(True) or _hints(False)
     if hints:
-        sl_dist, src = float(np.clip(np.median(hints), 1.0 * atr_v, 2.5 * atr_v)), "structure"
+        sl_dist, src = float(np.clip(np.median(hints), 1.0 * atr_v, 3.0 * atr_v)), "structure"
     else:
         sl_dist, src = ATR_SL_MULT * atr_v, "atr"
     cost = trade_cost(spec, entry)
@@ -1467,7 +1491,7 @@ class Account:
 
     @staticmethod
     def _today() -> str:
-        return datetime.utcnow().strftime("%Y-%m-%d")
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     def _save(self):
         try:
@@ -2192,7 +2216,7 @@ async def api_candles(symbol: str, limit: int = Query(400, ge=50, le=1000)):
             for n, i in STRATEGY_INFO.items()}
     return {"symbol": e.symbol, "decimals": e.spec.decimals, "candles": candles,
             "ema20": line("ema20"), "ema50": line("ema50"), "ema200": line("ema200"),
-            "trade": {"side": tr.side, "entry": tr.entry, "sl": tr.sl, "tp": tr.tp} if tr else None,
+            "trade": {"side": tr.side, "entry": tr.entry, "sl": tr.sl, "tp": tr.tp, "opened_at": tr.opened_at} if tr else None,
             "plan": plan, "main_zone": main_zone(e, ov) if ov else None, "overlays": ov, "info": info}
 
 
@@ -2269,7 +2293,7 @@ function draw(){
  g.fillStyle=bg;g.textAlign='left';g.textBaseline='middle';g.fillText(last.toFixed(d.decimals),pw+4,y(last));
 }
 const ic=b=>b==1?'🟢':b==-1?'🔴':'⚪';
-function row(v){return '<div class="r'+(v.name===SEL?' on':'')+'" onclick="pick(\''+v.name+'\')"><div>'+ic(v.bias)+' <b>'+v.title+'</b> '+(v.signal?'<span class="tag">إشارة</span>':'')+'</div><div class="m">'+v.text+'</div></div>'}
+function row(v){return '<div class="r'+(v.name===SEL?' on':'')+'" data-n="'+v.name+'" onclick="pick(this.dataset.n)"><div>'+ic(v.bias)+' <b>'+v.title+'</b> '+(v.signal?'<span class="tag">إشارة</span>':'')+'</div><div class="m">'+v.text+'</div></div>'}
 function views(){
  const el=document.getElementById('v'),a=AN;
  if(!a||!a.views){el.innerHTML='<div class="sum m">'+(MO?'لم يُحلَّل بعد: بانتظار إغلاق شمعة.':'السوق مغلق حالياً: لا يوجد تحليل جديد.')+'</div>';return}
