@@ -69,18 +69,20 @@ POLL_SECONDS = _i("POLL_SECONDS", 30)
 FETCH_INTERVAL = _i("FETCH_INTERVAL", 60)
 MIN_BARS = 150
 BAR_FETCH = _i("BAR_FETCH", 600)                 # عدد الشموع المحمّلة (للعرض والتحليل)
-CORE_CONFIRM = _i("CORE_CONFIRM", 2)             # أقل عدد استراتيجيات أساسية (ICT/SMC/إليوت/فني) تؤكد الاتجاه
+CORE_CONFIRM = _i("CORE_CONFIRM", 3)             # أقل عدد استراتيجيات أساسية (ICT/SMC/إليوت/فني) تؤكد الاتجاه
 SETUP_COUNTS = _b("SETUP_COUNTS", "1")           # 1: الإعداد المؤكد (قبل وصول السعر للمنطقة) يُحسب تأكيداً؛ 0: الإشارات المكتملة فقط
 CORE_MIN_SIGNALS = _i("CORE_MIN_SIGNALS", 1)     # أقل عدد إشارات أساسية مكتملة (⚡) ضمن التأكيد، والباقي يمكن أن يكون إعداداً (◔)
 SETUP_BONUS = _f("SETUP_BONUS", 0.35)            # نقاط إضافية لكل استراتيجية أساسية في وضع الإعداد
-MIN_SL_ATR = _f("MIN_SL_ATR", 1.0)               # أصغر وقف (× ATR)
+MIN_SL_ATR = _f("MIN_SL_ATR", 2.0)               # أصغر وقف (× ATR)
 MAX_SL_ATR = _f("MAX_SL_ATR", 3.5)               # أكبر وقف (× ATR)
 BAR_MINUTES = 15
-MIN_SCORE = _f("MIN_SCORE", 1.0)             # أقل مجموع نقاط للإشارة
+MIN_SCORE = _f("MIN_SCORE", 2.0)             # أقل مجموع نقاط للإشارة
 STRICT_SCORE = _f("STRICT_SCORE", 1.3)       # تحت هذا الحد تُقبل الإشارة فقط إذا وافق اتجاه 1H
 MIN_STRATEGIES = _i("MIN_STRATEGIES", 1)     # أقل عدد استراتيجيات متفقة
+HTF_HARD = _b("HTF_HARD", "1")               # إلزام اتفاق اتجاه 1H
+MIN_ADX = _f("MIN_ADX", 20)                  # أقل قوة اتجاه ADX
 ATR_SL_MULT = _f("ATR_SL_MULT", 1.5)         # وقف احتياطي إذا لم تعطِ الاستراتيجيات وقفاً هيكلياً
-RISK_REWARD = _f("RISK_REWARD", 2.0)
+RISK_REWARD = _f("RISK_REWARD", 0.3)
 COOLDOWN_BARS = _i("COOLDOWN_BARS", 4)
 MAX_COST_RATIO = _f("MAX_COST_RATIO", 0.35)  # السبريد+العمولة يجب ألا تتجاوز هذه النسبة من الوقف (يُوسَّع الوقف تلقائياً إن أمكن)
 DISABLED_STRATEGIES = {s.strip() for s in os.environ.get("DISABLED_STRATEGIES", "").split(",") if s.strip()}
@@ -1361,6 +1363,12 @@ def analyze(df: pd.DataFrame, spec: SymbolSpec, views: bool = True) -> dict:
     if win < STRICT_SCORE and htf != side:
         res["note"] = "إشارة حدّية: تحتاج توافق اتجاه الساعة (1H)"
         return res
+    if HTF_HARD and htf != side:
+        res["note"] = "اتجاه 1H لا يوافق الإشارة"
+        return res
+    if adx_v < MIN_ADX:
+        res["note"] = f"ADX {adx_v:.0f} أقل من {MIN_ADX:g}"
+        return res
     n_core, n_opp = len(core[side]), len(core[-side])
     n_sig = sum(1 for c in core[side] if c["mode"] == "signal")
     if n_core < CORE_CONFIRM or n_core <= n_opp:
@@ -1404,13 +1412,14 @@ def analyze(df: pd.DataFrame, spec: SymbolSpec, views: bool = True) -> dict:
             return res
     res.update({"sl_dist": sl_dist, "sl_source": src, "cost": cost})
 
-    # ---- الأهداف: TP1=1R (تعادل) • TP2=الهدف الرئيسي (R:R) • TP3=امتداد • + هدف إليوت إن وُجد
+    # ---- الأهداف: هدف واحد عندما RR<1 (إعداد النسبة العالية) • وإلا TP1=1R (تعادل) • TP2=الهدف الرئيسي • TP3=امتداد • + هدف إليوت
     rr = RISK_REWARD
     tp_dist = rr * sl_dist
-    targets = [{"label": "TP1", "r": 1.0}, {"label": "TP2", "r": round(rr, 2)},
-               {"label": "TP3", "r": round(max(3.0, rr + 1.0), 2)}]
+    targets = [{"label": "TP", "r": round(rr, 2)}] if rr < 1 else [
+        {"label": "TP1", "r": 1.0}, {"label": "TP2", "r": round(rr, 2)},
+        {"label": "TP3", "r": round(max(3.0, rr + 1.0), 2)}]
     ell = core_sc[side].get("elliott")
-    if ell and ell.get("tgt") is not None:
+    if rr >= 1 and ell and ell.get("tgt") is not None:
         er = (float(ell["tgt"]) - entry) * side / sl_dist
         if er >= 1.2:
             res["elliott_target"] = {"price": float(ell["tgt"]), "r": round(er, 2)}
@@ -1933,6 +1942,7 @@ class MarketEngine:
                         + (" — حرّك الوقف للتعادل" if x["label"] == "TP1" else "") for x in a.get("targets", []))
         ob = a.get("obstacle")
         obs = f"\n⚠️ مستوى قريب قبل الهدف: <code>{fmt(ob['price'], sp)}</code> ({ob['r']}R)" if ob else ""
+        foot = "" if RISK_REWARD < 1 else "\n\n<i>عند +1R حرّك الوقف للدخول، وبعد +1.5R تابع الوقف المتحرك.</i>"
         return (f"{icon} <b>{word} {self.symbol}</b>\n"
                 f"الدخول: <code>{fmt(t.entry, sp)}</code>\n{ez}"
                 f"⛔ الوقف: <code>{fmt(t.sl, sp)}</code> ({src}، مسافة {fmt(t.risk, sp)})\n{tps}{obs}\n"
@@ -1940,8 +1950,7 @@ class MarketEngine:
                 f"الحجم: <b>{size_label(self.symbol, sp, t.lots)}</b> | المخاطرة: ${t.risk_usd} "
                 f"({t.risk_usd / account.balance * 100:.1f}%) | الهامش: ${t.margin_usd}\n"
                 f"النقاط: {a['score']} | السوق: {a['regime']} (ADX {a['adx']}) | 1H: {htf}\n"
-                f"🧩 تأكيد أساسي: {core}\n\n{reasons}\n\n"
-                f"<i>عند +1R حرّك الوقف للدخول، وبعد +1.5R تابع الوقف المتحرك.</i>")
+                f"🧩 تأكيد أساسي: {core}\n\n{reasons}{foot}")
 
     def _close_message(self, t: Trade) -> str:
         icon = "✅" if t.pnl_r > 0.1 else "❌" if t.pnl_r < -0.1 else "➖"
@@ -2196,8 +2205,10 @@ async def api_strategies():
     return {
         "params": {"min_score": MIN_SCORE, "strict_score": STRICT_SCORE, "min_strategies": MIN_STRATEGIES, "risk_reward": RISK_REWARD,
                    "atr_sl_mult_fallback": ATR_SL_MULT, "max_cost_ratio": MAX_COST_RATIO, "core_confirm": CORE_CONFIRM,
-                   "setup_counts": SETUP_COUNTS, "min_sl_atr": MIN_SL_ATR, "max_sl_atr": MAX_SL_ATR},
+                   "setup_counts": SETUP_COUNTS, "min_sl_atr": MIN_SL_ATR, "max_sl_atr": MAX_SL_ATR,
+                   "htf_hard": HTF_HARD, "min_adx": MIN_ADX},
         "filters": ["نظام السوق ADX: ≥25 اتجاه، ≤18 عرضي", "اتجاه 1H (EMA20/50): عقوبة 25% عند المعاكسة",
+                    f"إلزام اتفاق اتجاه 1H: {'نعم' if HTF_HARD else 'لا'} • أقل ADX للدخول: {MIN_ADX:g}",
                     "تقلب ATR/وسيطه: رفض فوق 3× أو تحت 0.4×", "تجنب 21:00-24:00 UTC لغير الكريبتو",
                     f"السبريد+العمولة ≤ {MAX_COST_RATIO * 100:.0f}% من الوقف (يُوسَّع الوقف تلقائياً حتى {MAX_SL_ATR:g} ATR وإلا رُفضت)",
                     f"الدخول يتطلب تأكيد {CORE_CONFIRM} استراتيجيات أساسية أو أكثر (⚡ إشارة مكتملة / ◔ إعداد مؤكد)", "صفقة واحدة لكل مجموعة مرتبطة"],
