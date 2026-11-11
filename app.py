@@ -1,5 +1,5 @@
 """
-Zero Reversal Engine v48.2  (app.py)
+Zero Reversal Engine v49.0 - وضع 4 ساعات (app.py)
 - 12 استراتيجيات مستقلة + تصويت مرجّح + وقف هيكلي لكل استراتيجية
 - فلاتر: نظام السوق ADX، اتجاه 1H، التقلب، ساعات السيولة، تكلفة السبريد
 - رأس مال صغير: حجم الصفقة حسب المخاطرة والهامش وأصغر عقد، حدود يومية، حساب ورقي
@@ -69,26 +69,30 @@ POLL_SECONDS = _i("POLL_SECONDS", 30)
 FETCH_INTERVAL = _i("FETCH_INTERVAL", 60)
 MIN_BARS = 150
 BAR_FETCH = _i("BAR_FETCH", 600)                 # عدد الشموع المحمّلة (للعرض والتحليل)
-CORE_CONFIRM = _i("CORE_CONFIRM", 3)             # أقل عدد استراتيجيات أساسية (ICT/SMC/إليوت/فني) تؤكد الاتجاه
+CORE_CONFIRM = _i("CORE_CONFIRM", 2)             # أقل عدد استراتيجيات أساسية (ICT/SMC/إليوت/فني) تؤكد الاتجاه
 SETUP_COUNTS = _b("SETUP_COUNTS", "1")           # 1: الإعداد المؤكد (قبل وصول السعر للمنطقة) يُحسب تأكيداً؛ 0: الإشارات المكتملة فقط
 CORE_MIN_SIGNALS = _i("CORE_MIN_SIGNALS", 1)     # أقل عدد إشارات أساسية مكتملة (⚡) ضمن التأكيد، والباقي يمكن أن يكون إعداداً (◔)
 SETUP_BONUS = _f("SETUP_BONUS", 0.35)            # نقاط إضافية لكل استراتيجية أساسية في وضع الإعداد
-MIN_SL_ATR = _f("MIN_SL_ATR", 2.0)               # أصغر وقف (× ATR)
+MIN_SL_ATR = _f("MIN_SL_ATR", 1.0)               # أصغر وقف (× ATR)
 MAX_SL_ATR = _f("MAX_SL_ATR", 3.5)               # أكبر وقف (× ATR)
-BAR_MINUTES = 15
-MIN_SCORE = _f("MIN_SCORE", 2.0)             # أقل مجموع نقاط للإشارة
+TIMEFRAME = os.environ.get("TIMEFRAME", "4h").strip().lower()      # 4h (الموصى به بعد الاختبار) | 1h | 15m
+TF_MINUTES = {"15m": 15, "1h": 60, "4h": 240}.get(TIMEFRAME, 240)
+BAR_MINUTES = TF_MINUTES
+HTF_RULE = {"15m": "1h", "1h": "4h", "4h": "1D"}.get(TIMEFRAME, "1D")       # الإطار الأعلى لفلتر الاتجاه
+HTF_MIN_BARS = {"15m": 220, "1h": 220, "4h": 340}.get(TIMEFRAME, 340)      # أقل شموع لحساب اتجاه الإطار الأعلى
+MIN_SCORE = _f("MIN_SCORE", 1.0)             # أقل مجموع نقاط للإشارة
 STRICT_SCORE = _f("STRICT_SCORE", 1.3)       # تحت هذا الحد تُقبل الإشارة فقط إذا وافق اتجاه 1H
 MIN_STRATEGIES = _i("MIN_STRATEGIES", 1)     # أقل عدد استراتيجيات متفقة
-HTF_HARD = _b("HTF_HARD", "1")               # إلزام اتفاق اتجاه 1H
-MIN_ADX = _f("MIN_ADX", 20)                  # أقل قوة اتجاه ADX
+HTF_HARD = _b("HTF_HARD", "1")               # إلزام اتفاق اتجاه الإطار الأعلى (يومي على 4H)
+MIN_ADX = _f("MIN_ADX", 0)                  # أقل قوة اتجاه ADX
 ATR_SL_MULT = _f("ATR_SL_MULT", 1.5)         # وقف احتياطي إذا لم تعطِ الاستراتيجيات وقفاً هيكلياً
-RISK_REWARD = _f("RISK_REWARD", 0.3)
+RISK_REWARD = _f("RISK_REWARD", 3.0)
 COOLDOWN_BARS = _i("COOLDOWN_BARS", 4)
 MAX_COST_RATIO = _f("MAX_COST_RATIO", 0.35)  # السبريد+العمولة يجب ألا تتجاوز هذه النسبة من الوقف (يُوسَّع الوقف تلقائياً إن أمكن)
 DISABLED_STRATEGIES = {s.strip() for s in os.environ.get("DISABLED_STRATEGIES", "").split(",") if s.strip()}
 
 # --- رأس المال الصغير وإدارة المخاطر ---
-ACCOUNT_BALANCE = _f("ACCOUNT_BALANCE", 100)      # بالدولار
+ACCOUNT_BALANCE = _f("ACCOUNT_BALANCE", 10000)      # بالدولار
 RISK_PCT = _f("RISK_PCT", 1.0)                    # المخاطرة المستهدفة لكل صفقة %
 MAX_RISK_PCT = _f("MAX_RISK_PCT", 2.0)            # سقف المخاطرة إذا كان أصغر عقد أكبر من المستهدف
 MAX_TOTAL_RISK_PCT = _f("MAX_TOTAL_RISK_PCT", 3.0)  # مجموع مخاطرة الصفقات المفتوحة
@@ -267,7 +271,7 @@ def candle_pattern(a, p):
 def htf_direction(df: pd.DataFrame) -> int:
     """اتجاه الإطار الأعلى (1H) من EMA20/EMA50."""
     try:
-        h = df.resample("1h").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
+        h = df.resample(HTF_RULE).agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
         if len(h) < 55:
             return 0
         e20, e50, c = ema(h["Close"], 20).iloc[-1], ema(h["Close"], 50).iloc[-1], h["Close"].iloc[-1]
@@ -1364,7 +1368,7 @@ def analyze(df: pd.DataFrame, spec: SymbolSpec, views: bool = True) -> dict:
         res["note"] = "إشارة حدّية: تحتاج توافق اتجاه الساعة (1H)"
         return res
     if HTF_HARD and htf != side:
-        res["note"] = "اتجاه 1H لا يوافق الإشارة"
+        res["note"] = "اتجاه الإطار الأعلى لا يوافق الإشارة" + (" (غير متاح: بيانات قليلة)" if htf == 0 else "")
         return res
     if adx_v < MIN_ADX:
         res["note"] = f"ADX {adx_v:.0f} أقل من {MIN_ADX:g}"
@@ -1415,9 +1419,8 @@ def analyze(df: pd.DataFrame, spec: SymbolSpec, views: bool = True) -> dict:
     # ---- الأهداف: هدف واحد عندما RR<1 (إعداد النسبة العالية) • وإلا TP1=1R (تعادل) • TP2=الهدف الرئيسي • TP3=امتداد • + هدف إليوت
     rr = RISK_REWARD
     tp_dist = rr * sl_dist
-    targets = [{"label": "TP", "r": round(rr, 2)}] if rr < 1 else [
-        {"label": "TP1", "r": 1.0}, {"label": "TP2", "r": round(rr, 2)},
-        {"label": "TP3", "r": round(max(3.0, rr + 1.0), 2)}]
+    targets = [{"label": "TP", "r": round(rr, 2)}] if rr <= 1 else [
+        {"label": "TP1", "r": 1.0}, {"label": "TP", "r": round(rr, 2)}]
     ell = core_sc[side].get("elliott")
     if rr >= 1 and ell and ell.get("tgt") is not None:
         er = (float(ell["tgt"]) - entry) * side / sl_dist
@@ -1632,6 +1635,15 @@ def clean_ohlc(df: pd.DataFrame) -> pd.DataFrame:
     return df[~(rng > 15 * med)]      # حذف أخطاء البيانات فقط، لا الحركات القوية
 
 
+def to_tf(df: pd.DataFrame) -> pd.DataFrame:
+    """تجميع شموع الساعة إلى الإطار المطلوب (4H) على شبكة UTC (0،4،8،...) كما في الاختبار."""
+    if TIMEFRAME == "15m" or df is None or df.empty:
+        return df
+    o = df.resample(f"{max(1, TF_MINUTES // 60)}h").agg(
+        {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"})
+    return o.dropna(subset=["Open", "High", "Low", "Close"])
+
+
 class DataProvider:
     def __init__(self):
         self.okx = ccxt_async.okx({"enableRateLimit": True})
@@ -1668,7 +1680,7 @@ class DataProvider:
                 ms = BAR_MINUTES * 60 * 1000
                 since = int(time.time() * 1000) - bars * ms
                 for _ in range(bars // 100 + 4):
-                    chunk = await self.okx.fetch_ohlcv(sym, "15m", since=since, limit=100)
+                    chunk = await self.okx.fetch_ohlcv(sym, TIMEFRAME, since=since, limit=100)
                     if not chunk:
                         break
                     raw += chunk
@@ -1679,7 +1691,7 @@ class DataProvider:
                 log.warning("okx paging failed, falling back to 300 bars")
                 raw = []
         if len(raw) < min(bars, 300):
-            raw = await self.okx.fetch_ohlcv(sym, "15m", limit=min(bars, 300))
+            raw = await self.okx.fetch_ohlcv(sym, TIMEFRAME, limit=min(bars, 300))
         if not raw:
             return None
         df = pd.DataFrame(raw, columns=["time", "Open", "High", "Low", "Close", "Volume"])
@@ -1692,19 +1704,22 @@ class DataProvider:
             def work():
                 if self.tv is None:
                     self.tv = TvDatafeed()
-                return self.tv.get_hist(symbol=spec.tv[1], exchange=spec.tv[0],
-                                        interval=Interval.in_15_minute, n_bars=bars)
+                src = Interval.in_15_minute if TIMEFRAME == "15m" else Interval.in_1_hour
+                nb = bars if TIMEFRAME == "15m" else min(5000, bars * max(1, TF_MINUTES // 60) + 8)
+                return self.tv.get_hist(symbol=spec.tv[1], exchange=spec.tv[0], interval=src, n_bars=nb)
             hist = await asyncio.to_thread(work)
         if hist is None or hist.empty:
             return None
         hist = hist.rename(columns={"open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"})
-        df = clean_ohlc(hist).tail(bars)
+        df = to_tf(clean_ohlc(hist)).tail(bars)
         return df if len(df) >= 100 else None
 
     async def _yf(self, spec, bars):
         def work():
-            return yf.download(spec.yf, period="30d" if bars > 800 else "10d", interval="15m",
-                               progress=False, auto_adjust=False)
+            if TIMEFRAME == "15m":
+                return yf.download(spec.yf, period="30d" if bars > 800 else "10d", interval="15m",
+                                   progress=False, auto_adjust=False)
+            return yf.download(spec.yf, period="400d", interval="1h", progress=False, auto_adjust=False)
         d = await asyncio.to_thread(work)
         if d is None or d.empty:
             return None
@@ -1712,7 +1727,7 @@ class DataProvider:
             d.columns = d.columns.get_level_values(0)
         if d.index.tz is not None:
             d.index = d.index.tz_convert("UTC").tz_localize(None)
-        df = clean_ohlc(d).tail(bars)
+        df = to_tf(clean_ohlc(d)).tail(bars)
         return df if len(df) >= 100 else None
 
 
@@ -1839,6 +1854,8 @@ class MarketEngine:
             return
         self.df, self.source = df, src
         self.data_ok, self.note = True, "OK"
+        if HTF_HARD and len(df) < HTF_MIN_BARS:
+            self.data_ok, self.note = False, f"بيانات قليلة ({len(df)}) لاتجاه الإطار الأعلى؛ يلزم {HTF_MIN_BARS}+"
         if self.spec.kind == "crypto":    # فحص حداثة البيانات (UTC معروف للكريبتو)
             age = datetime.utcnow() - df.index[-1].to_pydatetime()
             if age > timedelta(minutes=BAR_MINUTES * 3):
@@ -1988,7 +2005,7 @@ def backtest(df: pd.DataFrame, symbol: str, spec: SymbolSpec, balance: float = A
     bal, skipped_cap = balance, 0
     i, n = MIN_BARS, len(df)
     while i < n - 1:
-        res = analyze(df.iloc[max(0, i + 1 - 300):i + 1], spec, views=False)
+        res = analyze(df.iloc[max(0, i + 1 - 500):i + 1], spec, views=False)
         if res["decision"] not in ("BUY", "SELL") or (spec.spot and res["side"] == -1 and not ALLOW_SPOT_SHORT):
             i += 1
             continue
@@ -2038,7 +2055,8 @@ def backtest(df: pd.DataFrame, symbol: str, spec: SymbolSpec, balance: float = A
 
 
 # ============================== التطبيق ==============================
-engines: dict[str, MarketEngine] = {s: MarketEngine(s, sp) for s, sp in SYMBOLS.items()}
+ENABLED_SYMBOLS = [x.strip().upper() for x in os.environ.get("SYMBOLS_ENABLED", "XAUUSD,BTCUSDT").split(",") if x.strip()]
+engines: dict[str, MarketEngine] = {s: MarketEngine(s, sp) for s, sp in SYMBOLS.items() if s in ENABLED_SYMBOLS}
 telegram = Telegram(TELEGRAM_TOKEN, SUBSCRIBERS_FILE)
 account = Account(ACCOUNT_BALANCE, ACCOUNT_FILE)
 
@@ -2136,7 +2154,7 @@ async def lifespan(app: FastAPI):
     await state.http.aclose()
 
 
-app = FastAPI(title="Zero Reversal Engine", version="48.2", lifespan=lifespan)
+app = FastAPI(title="Zero Reversal Engine", version="49.0", lifespan=lifespan)
 
 
 @app.get("/health")
